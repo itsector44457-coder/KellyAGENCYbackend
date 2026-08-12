@@ -1,0 +1,16 @@
+# Environment Variables — NEVER push to GitHub
+.env
+.env.*
+!.env.example
+
+# Node modules
+node_modules/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
