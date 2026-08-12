@@ -23,6 +23,10 @@ import { AgencySettingsModel } from './models/AgencySettings.js';
 
 dotenv.config();
 
+// Frontend URL — set FRONTEND_URL env var on Render to your live frontend URL
+// e.g. https://kelly-agency-xyz.vercel.app  or  https://yourdomain.com
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -334,7 +338,7 @@ app.post('/api/members', async (req, res) => {
         title: `Welcome to the Team, ${newMember.name}!`,
         message: `You have been added to <strong>Kelly Agency Team OS</strong>.`,
         details: `<strong>Role:</strong> ${newMember.role}<br/><strong>Email:</strong> ${newMember.email}<br/><strong>Password:</strong> ${password}`,
-        actionUrl: `http://localhost:5173/member-management/login`,
+        actionUrl: `${FRONTEND_URL}/member-management/login`,
       });
     } catch (_) { /* email failure non-critical */ }
 
@@ -467,8 +471,8 @@ app.post('/api/projects', async (req, res) => {
     await newProject.save();
 
     // Auto-dispatch Client Acceptance Package Portal Email
-    const portalUrl = `http://localhost:5173/client-portal/${portalToken}`;
-    const clientLoginUrl = `http://localhost:5173/client-login`;
+    const portalUrl = `${FRONTEND_URL}/client-portal/${portalToken}`;
+    const clientLoginUrl = `${FRONTEND_URL}/client-login`;
     sendClientProjectPortalEmail({
       to: newProject.clientEmail,
       clientName: newProject.client,
@@ -904,7 +908,7 @@ app.post('/api/tasks', async (req, res) => {
         title: `You have been assigned a new task`,
         message: `${newTask.createdByName} assigned you to <strong>${newTask.title}</strong> under <strong>${newTask.projectName}</strong>.`,
         details: `<strong>Priority:</strong> ${newTask.priority}<br/><strong>Due Date:</strong> ${newTask.dueDate}`,
-        actionUrl: `http://localhost:5173/member-management/tasks`,
+        actionUrl: `${FRONTEND_URL}/member-management/tasks`,
       });
     } catch (_) { /* email non-critical */ }
 

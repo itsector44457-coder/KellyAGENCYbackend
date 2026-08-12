@@ -83,7 +83,7 @@ export async function sendMemberNotificationEmail({ to, subject, title, message,
  */
 export async function sendClientProjectPortalEmail({ to, clientName, projectTitle, portalUrl, clientLoginUrl, clientPassword, advancePercent, advanceAmount }) {
   const recipient = to || 'client@example.com';
-  const loginUrl = clientLoginUrl || 'http://localhost:5173/client-login';
+  const loginUrl = clientLoginUrl || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/client-login`;
   const percentText = advancePercent ? `${advancePercent}%` : '50%';
 
   const htmlContent = `
