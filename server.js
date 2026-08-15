@@ -1,5 +1,5 @@
 // ============================================================
-// KELLY AGENCY — TEAM OS BACKEND SERVER
+// RADHA AGENCY — TEAM OS BACKEND SERVER
 // DNS SETUP MUST BE FIRST IMPORT (before mongoose/models)
 // ============================================================
 import './dns-setup.js';
@@ -85,14 +85,14 @@ const initialMembersSeed = [
   {
     id: 'jay-singh',
     name: 'Jay Singh Sengar',
-    email: 'jay.sengar@kellyagency.in',
-    password: 'Jay@kelly2026',
+    email: 'jay.sengar@radhaagency.in',
+    password: 'Jay@radha2026',
     role: 'Founder & CEO / Creative Director',
     department: 'Leadership',
     reportsTo: 'Board / Strategic Direction',
     status: 'AVAILABLE',
     profileImage: '/assets/founder.jpeg',
-    bio: "Leads Kelly Agency's vision, project strategy, and high-value client relationships, ensuring digital solutions align with core business goals.",
+    bio: "Leads Radha Agency's vision, project strategy, and high-value client relationships, ensuring digital solutions align with core business goals.",
     responsibilities: [
       'Company vision & long-term growth',
       'Business strategy & partnerships',
@@ -174,7 +174,7 @@ async function seedDatabase() {
         { id: 'jay-singh' },
         {
           $set: {
-            password: 'Jay@kelly2026',
+            password: 'Jay@radha2026',
             permissions: initialMembersSeed[0].permissions,
           },
         }
@@ -197,7 +197,7 @@ app.get('/api/health', (req, res) => {
     status: 'OK',
     database: dbState[mongoose.connection.readyState] || 'unknown',
     dbConnected: isDBConnected,
-    system: 'Kelly Agency Team OS Backend',
+    system: 'Radha Agency Team OS Backend',
     timestamp: new Date().toISOString(),
   });
 });
@@ -305,7 +305,7 @@ app.post('/api/members', async (req, res) => {
       reportsTo: 'Jay Singh Sengar',
       status: 'AVAILABLE',
       profileImage: '/assets/founder.jpeg',
-      bio: `${role} at Kelly Agency.`,
+      bio: `${role} at Radha Agency.`,
       responsibilities: responsibilities || [role],
       permissions: permissions || getRolePermissions(role, department || 'General'),
       skills: ['Agency Workflow'],
@@ -334,9 +334,9 @@ app.post('/api/members', async (req, res) => {
     try {
       await sendMemberNotificationEmail({
         to: newMember.email,
-        subject: `Welcome to Kelly Agency Team OS - Your Credentials`,
+        subject: `Welcome to Radha Agency Team OS - Your Credentials`,
         title: `Welcome to the Team, ${newMember.name}!`,
-        message: `You have been added to <strong>Kelly Agency Team OS</strong>.`,
+        message: `You have been added to <strong>Radha Agency Team OS</strong>.`,
         details: `<strong>Role:</strong> ${newMember.role}<br/><strong>Email:</strong> ${newMember.email}<br/><strong>Password:</strong> ${password}`,
         actionUrl: `${FRONTEND_URL}/member-management/login`,
       });
@@ -421,7 +421,7 @@ app.post('/api/projects', async (req, res) => {
     const advanceVal = Math.round(numericPrice * (advancePercent / 100));
     const remainingVal = numericPrice - advanceVal;
 
-    const autoPassword = `KellyClient#${Math.floor(1000 + Math.random() * 9000)}`;
+    const autoPassword = `RadhaClient#${Math.floor(1000 + Math.random() * 9000)}`;
     const portalToken = `portal-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
     const newProject = new ProjectModel({
@@ -443,7 +443,7 @@ app.post('/api/projects', async (req, res) => {
       members: projectData.members || ['jay-singh'],
       memberRoles: projectData.memberRoles || {},
       proposal: {
-        overview: projectData.proposal?.overview || `${projectData.title} custom digital solution developed by Kelly Agency.`,
+        overview: projectData.proposal?.overview || `${projectData.title} custom digital solution developed by Radha Agency.`,
         features: projectData.proposal?.features || ['Responsive Web App UI', 'Fast Backend API Integration', 'SEO & Analytics Setup'],
         pages: projectData.proposal?.pages || ['Home Page', 'Services Page', 'Client Dashboard / Portal', 'Contact & Lead Booking'],
         technologies: projectData.proposal?.technologies || ['React', 'Node.js', 'MongoDB Atlas', 'Tailwind CSS'],
@@ -607,7 +607,7 @@ app.post('/api/client-portal/:tokenOrId/submit-payment', async (req, res) => {
 
     await project.save();
 
-    // Create Notification for Kelly Agency Finance & Leadership Team
+    // Create Notification for Radha Agency Finance & Leadership Team
     try {
       const leadershipMembers = await MemberModel.find({ 
         $or: [
@@ -901,7 +901,7 @@ app.post('/api/tasks', async (req, res) => {
     // Send email notification
     try {
       const assignedMember = await MemberModel.findOne({ id: newTask.assignedMemberId });
-      const targetEmail = assignedMember?.email || 'kellyagency4@gmail.com';
+      const targetEmail = assignedMember?.email || 'radhaagency4@gmail.com';
       await sendMemberNotificationEmail({
         to: targetEmail,
         subject: `New Task Assigned: ${newTask.title}`,
@@ -981,7 +981,7 @@ app.get('/api/notifications', async (req, res) => {
 // ============================================================
 app.listen(PORT, () => {
   console.log('\n==================================================');
-  console.log('🚀 KELLY AGENCY TEAM OS BACKEND SERVER');
+  console.log('🚀 RADHA AGENCY TEAM OS BACKEND SERVER');
   console.log(`📡 URL: http://localhost:${PORT}`);
   console.log('🔒 Authentication: Email & Password login');
   console.log('👑 CEO: Jay Singh Sengar (FULL ACCESS)');
@@ -995,7 +995,7 @@ app.listen(PORT, () => {
     console.warn(`\n⚠️  Port ${PORT} is in use. Trying port ${fallback}...`);
     app.listen(fallback, () => {
       console.log('\n==================================================');
-      console.log('🚀 KELLY AGENCY TEAM OS BACKEND SERVER');
+      console.log('🚀 RADHA AGENCY TEAM OS BACKEND SERVER');
       console.log(`📡 URL: http://localhost:${fallback}  (fallback port)`);
       console.log('⚠️  Tip: run  taskkill /F /IM node.exe  to free port ' + PORT);
       console.log('==================================================\n');

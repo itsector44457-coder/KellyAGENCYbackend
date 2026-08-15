@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 // Create Nodemailer Transporter using Gmail SMTP App Password
-const gmailUser = process.env.GMAIL_USER || 'kellyagency4@gmail.com';
+const gmailUser = process.env.GMAIL_USER || 'radhaagency4@gmail.com';
 const gmailPass = process.env.GMAIL_PASS || 'jahkhqfynjvbuwqt';
 
 const transporter = nodemailer.createTransport({
@@ -25,10 +25,10 @@ transporter.verify((error, success) => {
 });
 
 /**
- * Send HTML Email Notification to Kelly Agency Member via Gmail SMTP
+ * Send HTML Email Notification to Radha Agency Member via Gmail SMTP
  */
 export async function sendMemberNotificationEmail({ to, subject, title, message, details, actionUrl }) {
-  const recipient = to || 'kellyagency4@gmail.com';
+  const recipient = to || 'radhaagency4@gmail.com';
 
   const htmlContent = `
     <!DOCTYPE html>
@@ -48,13 +48,13 @@ export async function sendMemberNotificationEmail({ to, subject, title, message,
     </head>
     <body>
       <div class="container">
-        <div class="brand">KELLY AGENCY • TEAM OPERATING SYSTEM</div>
+        <div class="brand">RADHA AGENCY • TEAM OPERATING SYSTEM</div>
         <div class="title">${title || subject}</div>
         <div class="message">${message}</div>
         ${details ? `<div class="details-box">${details}</div>` : ''}
         ${actionUrl ? `<a href="${actionUrl}" class="btn">Open System Module</a>` : ''}
         <div class="footer">
-          © ${new Date().getFullYear()} KELLY AGENCY. Official Team Notification System.
+          © ${new Date().getFullYear()} RADHA AGENCY. Official Team Notification System.
         </div>
       </div>
     </body>
@@ -65,9 +65,9 @@ export async function sendMemberNotificationEmail({ to, subject, title, message,
 
   try {
     const info = await transporter.sendMail({
-      from: `"Kelly Agency OS" <${gmailUser}>`,
+      from: `"Radha Agency OS" <${gmailUser}>`,
       to: recipient,
-      subject: `[Kelly Agency Team OS] ${subject}`,
+      subject: `[Radha Agency Team OS] ${subject}`,
       html: htmlContent,
     });
     console.log(`🚀 [Gmail Email Sent Successfully] MessageID: ${info.messageId}`);
@@ -105,7 +105,7 @@ export async function sendClientProjectPortalEmail({ to, clientName, projectTitl
     </head>
     <body>
       <div class="container">
-        <div class="brand">KELLY AGENCY • CLIENT ACCEPTANCE PACKAGE</div>
+        <div class="brand">RADHA AGENCY • CLIENT ACCEPTANCE PACKAGE</div>
         <div class="title">Welcome, ${clientName}!</div>
         <div class="message">
           Your project proposal and service agreement package for <strong>"${projectTitle}"</strong> is ready for review and project confirmation.
@@ -128,7 +128,7 @@ export async function sendClientProjectPortalEmail({ to, clientName, projectTitl
           <a href="${portalUrl}" class="btn">View Proposal & Accept Project →</a>
         </div>
         <div class="footer">
-          © ${new Date().getFullYear()} KELLY AGENCY DIGITAL MEDIA. Official Client Portal.
+          © ${new Date().getFullYear()} RADHA AGENCY DIGITAL MEDIA. Official Client Portal.
         </div>
       </div>
     </body>
@@ -137,9 +137,9 @@ export async function sendClientProjectPortalEmail({ to, clientName, projectTitl
 
   try {
     const info = await transporter.sendMail({
-      from: `"Kelly Agency Client Services" <${gmailUser}>`,
+      from: `"Radha Agency Client Services" <${gmailUser}>`,
       to: recipient,
-      subject: `📁 Proposal Package & Client Login: ${projectTitle} - Kelly Agency`,
+      subject: `📁 Proposal Package & Client Login: ${projectTitle} - Radha Agency`,
       html: htmlContent,
     });
     console.log(`🚀 [Client Portal Email Sent] To: ${recipient} | MessageID: ${info.messageId}`);
@@ -174,11 +174,11 @@ export async function sendPaymentApprovalConfirmationEmail({ to, clientName, pro
     </head>
     <body>
       <div class="container">
-        <div class="brand">🎉 KELLY AGENCY • PROJECT CONFIRMED</div>
+        <div class="brand">🎉 RADHA AGENCY • PROJECT CONFIRMED</div>
         <div class="title">Advance Payment Received & Project Started!</div>
         <div class="message">
           Dear <strong>${clientName}</strong>,<br><br>
-          We are pleased to inform you that your advance payment of <strong>₹${advanceAmount?.toLocaleString('en-IN')}</strong> (UTR: <code>${utrNumber}</code>) for <strong>"${projectTitle}"</strong> has been verified and approved by Kelly Agency Finance.
+          We are pleased to inform you that your advance payment of <strong>₹${advanceAmount?.toLocaleString('en-IN')}</strong> (UTR: <code>${utrNumber}</code>) for <strong>"${projectTitle}"</strong> has been verified and approved by Radha Agency Finance.
         </div>
         <div class="details-box">
           <p style="margin: 0 0 8px 0;"><span class="status-badge">✅ PROJECT STATUS: CONFIRMED & IN PROGRESS</span></p>
@@ -188,7 +188,7 @@ export async function sendPaymentApprovalConfirmationEmail({ to, clientName, pro
           <p style="margin: 0;"><strong>🧾 Attached Documents:</strong> Approved Proposal, Signed Contract Agreement & Payment Receipt Voucher.</p>
         </div>
         <div class="footer">
-          © ${new Date().getFullYear()} KELLY AGENCY. Production & Development Team.
+          © ${new Date().getFullYear()} RADHA AGENCY. Production & Development Team.
         </div>
       </div>
     </body>
@@ -197,7 +197,7 @@ export async function sendPaymentApprovalConfirmationEmail({ to, clientName, pro
 
   try {
     const info = await transporter.sendMail({
-      from: `"Kelly Agency Finance Team" <${gmailUser}>`,
+      from: `"Radha Agency Finance Team" <${gmailUser}>`,
       to: recipient,
       subject: `🎉 Project Confirmed: ${projectTitle} - Advance Payment Received & Signed Contract`,
       html: htmlContent,

@@ -6,7 +6,7 @@ const projectSchema = new mongoose.Schema({
   client: { type: String, required: true },
   clientEmail: { type: String, default: 'client@example.com' },
   clientPhone: { type: String, default: '+91 98765 43210' },
-  clientPassword: { type: String }, // Auto-generated password e.g. "KellyClient#9821"
+  clientPassword: { type: String }, // Auto-generated password e.g. "RadhaClient#9821"
   clientPortalToken: { type: String, unique: true, sparse: true },
   status: { 
     type: String, 
@@ -24,7 +24,7 @@ const projectSchema = new mongoose.Schema({
   
   // 📁 Client Acceptance Package Details
   proposal: {
-    overview: { type: String, default: 'High-performance digital platform solution designed by Kelly Agency.' },
+    overview: { type: String, default: 'High-performance digital platform solution designed by Radha Agency.' },
     features: [{ type: String }],
     pages: [{ type: String }],
     technologies: [{ type: String }],
