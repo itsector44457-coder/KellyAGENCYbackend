@@ -553,3 +553,65 @@ export async function sendAgentWithdrawalRejectedEmail({ to, agentName, amount, 
     console.error('❌ [Withdrawal Rejected Email Error]:', err.message);
   }
 }
+
+/**
+ * Send Password Reset OTP Email
+ */
+export async function sendPasswordResetOtpEmail({ to, name, otp, userType }) {
+  const recipient = to || 'user@example.com';
+  const roleTitle = userType === 'AGENT' ? 'Agent Partner Portal' : (userType === 'CLIENT' ? 'Client Project Portal' : 'Internal Team OS');
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif; background-color: #1A1C11; color: #f1ece2; margin: 0; padding: 24px; }
+        .container { max-width: 540px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
+        .brand { font-size: 20px; font-weight: 900; letter-spacing: 2px; color: #b7e44c; text-transform: uppercase; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 14px; }
+        .title { font-size: 22px; font-weight: 700; color: #ffffff; margin-bottom: 12px; }
+        .message { font-size: 14px; line-height: 1.6; color: #d1cfc7; margin-bottom: 20px; }
+        .otp-box { background-color: #1A1C11; border: 1px solid rgba(183, 228, 76, 0.4); border-radius: 12px; padding: 20px; text-align: center; margin: 24px 0; }
+        .otp-code { font-size: 36px; font-weight: 900; letter-spacing: 8px; color: #b7e44c; font-family: monospace; }
+        .expiry { font-size: 11px; color: #ef4444; margin-top: 8px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+        .footer { margin-top: 32px; font-size: 11px; color: #888680; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px; text-align: center; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="brand">RADHA AGENCY • PASSWORD RESET</div>
+        <div class="title">🔐 Reset Your Password (${roleTitle})</div>
+        <div class="message">
+          Hello <strong>${name || 'User'}</strong>,<br/><br/>
+          We received a request to reset your password for your <strong>${roleTitle}</strong> account on Radha Agency. Use the 6-digit verification code below to verify your identity and set a new password.
+        </div>
+        <div class="otp-box">
+          <div class="otp-code">${otp}</div>
+          <div class="expiry">⚠️ This code expires in 10 minutes. Do not share with anyone.</div>
+        </div>
+        <div class="message" style="font-size: 12px; color: #a19f96;">
+          If you did not request a password reset, you can safely ignore this email. Your account remains completely secure.
+        </div>
+        <div class="footer">
+          © ${new Date().getFullYear()} RADHA AGENCY DIGITAL MEDIA. Security Department.
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  try {
+    const info = await transporter.sendMail({
+      from: `"Radha Agency Security" <${gmailUser}>`,
+      to: recipient,
+      subject: `[${otp}] Password Reset Verification Code - Radha Agency`,
+      html: htmlContent,
+    });
+    console.log(`🚀 [Password Reset OTP Sent] To: ${recipient} (${userType}) | MsgID: ${info.messageId}`);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error('❌ [Password Reset OTP Error]:', error.message);
+    return { success: false, error: error.message };
+  }
+}

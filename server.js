@@ -22,6 +22,7 @@ import { AgencyFinanceModel } from './models/AgencyFinance.js';
 import { AgencySettingsModel } from './models/AgencySettings.js';
 import { AgentModel } from './models/Agent.js';
 import { AgentOtpModel } from './models/AgentOtp.js';
+import { PasswordResetOtpModel } from './models/PasswordResetOtp.js';
 import { AgentLeadModel } from './models/AgentLead.js';
 import { AgentWithdrawalModel } from './models/AgentWithdrawal.js';
 
@@ -268,6 +269,142 @@ app.post('/api/auth/login', async (req, res) => {
     delete memberData.password;
 
     res.json({ success: true, token: `token-${member.id}-${Date.now()}`, member: memberData });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// ============================================================
+// FORGOT & RESET PASSWORD (TEAM MEMBERS, AGENTS, CLIENTS)
+// ============================================================
+
+// 1. POST Send Reset OTP
+app.post('/api/auth/forgot-password/send-otp', async (req, res) => {
+  try {
+    const { email, userType } = req.body;
+    if (!email || !userType) {
+      return res.status(400).json({ error: 'Email and user type (TEAM, AGENT, or CLIENT) are required.' });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+    let userName = '';
+    let accountFound = false;
+
+    if (userType === 'TEAM') {
+      const altEmail = cleanEmail.includes('@radhaagency.in')
+        ? cleanEmail.replace('@radhaagency.in', '@kellyagency.in')
+        : cleanEmail.replace('@kellyagency.in', '@radhaagency.in');
+
+      const member = await MemberModel.findOne({
+        $or: [{ email: cleanEmail }, { email: altEmail }]
+      });
+      if (member) {
+        accountFound = true;
+        userName = member.name;
+      }
+    } else if (userType === 'AGENT') {
+      const agent = await AgentModel.findOne({ email: cleanEmail });
+      if (agent) {
+        accountFound = true;
+        userName = agent.name;
+      }
+    } else if (userType === 'CLIENT') {
+      const project = await ProjectModel.findOne({ clientEmail: cleanEmail });
+      if (project) {
+        accountFound = true;
+        userName = project.client;
+      }
+    }
+
+    if (!accountFound) {
+      return res.status(404).json({ error: `No registered ${userType.toLowerCase()} account found with email: ${cleanEmail}` });
+    }
+
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+
+    await PasswordResetOtpModel.findOneAndUpdate(
+      { email: cleanEmail, userType },
+      { otp, expiresAt, createdAt: new Date() },
+      { upsert: true, new: true }
+    );
+
+    await sendPasswordResetOtpEmail({
+      to: cleanEmail,
+      name: userName,
+      otp,
+      userType
+    });
+
+    res.json({
+      success: true,
+      message: `A 6-digit verification code has been sent to ${cleanEmail}. Valid for 10 minutes.`
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 2. POST Verify OTP & Set New Password
+app.post('/api/auth/forgot-password/verify-and-reset', async (req, res) => {
+  try {
+    const { email, userType, otp, newPassword } = req.body;
+    if (!email || !userType || !otp || !newPassword) {
+      return res.status(400).json({ error: 'Email, user type, OTP, and new password are required.' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanOtp = otp.trim();
+
+    const otpRecord = await PasswordResetOtpModel.findOne({ email: cleanEmail, userType });
+    if (!otpRecord) {
+      return res.status(400).json({ error: 'No active OTP request found. Please request a new code.' });
+    }
+
+    if (new Date() > new Date(otpRecord.expiresAt)) {
+      await PasswordResetOtpModel.deleteOne({ email: cleanEmail, userType });
+      return res.status(400).json({ error: 'Verification code has expired. Please request a new one.' });
+    }
+
+    if (otpRecord.otp !== cleanOtp) {
+      return res.status(400).json({ error: 'Incorrect verification code. Please try again.' });
+    }
+
+    // OTP is valid! Update password in respective model
+    if (userType === 'TEAM') {
+      const altEmail = cleanEmail.includes('@radhaagency.in')
+        ? cleanEmail.replace('@radhaagency.in', '@kellyagency.in')
+        : cleanEmail.replace('@kellyagency.in', '@radhaagency.in');
+
+      await MemberModel.updateMany(
+        { $or: [{ email: cleanEmail }, { email: altEmail }] },
+        { $set: { password: newPassword, email: cleanEmail.includes('@kellyagency.in') ? cleanEmail.replace('@kellyagency.in', '@radhaagency.in') : cleanEmail } }
+      );
+    } else if (userType === 'AGENT') {
+      await AgentModel.findOneAndUpdate(
+        { email: cleanEmail },
+        { $set: { password: newPassword } }
+      );
+    } else if (userType === 'CLIENT') {
+      await ProjectModel.updateMany(
+        { clientEmail: cleanEmail },
+        { $set: { clientPassword: newPassword } }
+      );
+    }
+
+    // Delete used OTP
+    await PasswordResetOtpModel.deleteOne({ email: cleanEmail, userType });
+
+    res.json({
+      success: true,
+      message: 'Password has been reset successfully! You can now log in with your new password.'
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
