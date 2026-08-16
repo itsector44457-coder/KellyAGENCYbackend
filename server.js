@@ -42,9 +42,10 @@ app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ limit: '25mb', extended: true }));
 const PORT = parseInt(process.env.PORT) || 5000;
 
-const MONGO_URI =
-  process.env.MONGO_URI ||
-  'mongodb+srv://kellyagency4_db_user:MvSopu3TkK9icr3k@kellyagency.nbcs078.mongodb.net/kellyagency?retryWrites=true&w=majority&appName=KellyAgency';
+const MONGO_URI = process.env.MONGO_URI;
+if (!MONGO_URI) {
+  console.warn('⚠️ [Config] MONGO_URI not found in process.env. Please configure .env file.');
+}
 
 // ============================================================
 // MIDDLEWARE
