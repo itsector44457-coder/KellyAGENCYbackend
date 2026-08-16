@@ -1035,6 +1035,131 @@ app.get('/api/notifications', async (req, res) => {
 // ============================================================
 
 // ============================================================
+
+// ============================================================
+// CLIENT PROJECT INTAKE & INQUIRY SUBMISSION (WITH / WITHOUT REFERRAL)
+// ============================================================
+app.post('/api/inquiries/submit-project-request', async (req, res) => {
+  try {
+    const {
+      clientName,
+      clientEmail,
+      clientPhone,
+      companyName,
+      projectTitle,
+      projectType,
+      projectBudget,
+      requirements,
+      referralCode
+    } = req.body;
+
+    if (!clientName || !clientEmail || !projectTitle) {
+      return res.status(400).json({ error: 'Client name, email, and project title are required.' });
+    }
+
+    const budgetNum = Number(projectBudget) || 25000;
+    const cleanEmail = clientEmail.toLowerCase().trim();
+    const cleanRefCode = referralCode ? referralCode.trim().toUpperCase() : null;
+
+    let matchedAgent = null;
+    if (cleanRefCode) {
+      matchedAgent = await AgentModel.findOne({ referralCode: cleanRefCode });
+    }
+
+    const leadId = `INQ-${Date.now().toString().slice(-5)}`;
+
+    let newLead;
+
+    if (matchedAgent) {
+      // 1. Case A: Client came with valid Agent Referral Code -> Assign to Agent with 10% commission
+      const commissionPercent = matchedAgent.commissionRatePercent || 10;
+      const commissionAmount = Math.round(budgetNum * (commissionPercent / 100));
+
+      newLead = await AgentLeadModel.create({
+        id: leadId,
+        agentId: matchedAgent.id,
+        agentName: matchedAgent.name,
+        agentEmail: matchedAgent.email,
+        agentReferralCode: matchedAgent.referralCode,
+        clientName: clientName.trim(),
+        clientEmail: cleanEmail,
+        clientPhone: clientPhone || '',
+        companyName: companyName || '',
+        projectTitle: projectTitle.trim(),
+        projectType: projectType || 'Custom Digital Solution',
+        projectBudget: budgetNum,
+        requirements: requirements || '',
+        status: 'LEAD_SUBMITTED',
+        commissionRatePercent: commissionPercent,
+        commissionAmount,
+        commissionStatus: 'LOCKED_IN_PIPELINE'
+      });
+
+      // Update Agent pending pipeline
+      matchedAgent.pendingPipelineAmount = (matchedAgent.pendingPipelineAmount || 0) + commissionAmount;
+      await matchedAgent.save();
+
+      console.log(`🤝 [Referred Client Lead] Created ${leadId} for Agent ${matchedAgent.name} (Ref: ${matchedAgent.referralCode})`);
+
+      // Notify Finance Team in Team OS
+      try {
+        await NotificationModel.create({
+          id: `notif-${Date.now()}`,
+          targetMemberId: 'all',
+          type: 'TASK_ASSIGNED',
+          title: `Referred Client Inquiry: ${projectTitle}`,
+          message: `Client ${clientName} submitted a project quote request via Agent ${matchedAgent.name} (${matchedAgent.referralCode}). Budget: ₹${budgetNum.toLocaleString('en-IN')}.`,
+          actionUrl: `/member-management/finance`
+        });
+      } catch (_) {}
+    } else {
+      // 2. Case B: Direct Client without Referral -> Direct to Finance with ₹0 Commission!
+      newLead = await AgentLeadModel.create({
+        id: leadId,
+        agentId: 'DIRECT_AGENCY',
+        agentName: 'Direct Website Inquiry (No Agent)',
+        agentEmail: 'contact@radhaagency.in',
+        agentReferralCode: 'DIRECT_CLIENT',
+        clientName: clientName.trim(),
+        clientEmail: cleanEmail,
+        clientPhone: clientPhone || '',
+        companyName: companyName || '',
+        projectTitle: projectTitle.trim(),
+        projectType: projectType || 'Custom Digital Solution',
+        projectBudget: budgetNum,
+        requirements: requirements || '',
+        status: 'LEAD_SUBMITTED',
+        commissionRatePercent: 0,
+        commissionAmount: 0,
+        commissionStatus: 'NO_COMMISSION'
+      });
+
+      console.log(`🌐 [Direct Client Lead] Created ${leadId} without referral. Direct to Finance Team.`);
+
+      // Notify Finance Team in Team OS
+      try {
+        await NotificationModel.create({
+          id: `notif-${Date.now()}`,
+          targetMemberId: 'all',
+          type: 'TASK_ASSIGNED',
+          title: `Direct Website Project Inquiry: ${projectTitle}`,
+          message: `Client ${clientName} requested project quote directly from website. Budget: ₹${budgetNum.toLocaleString('en-IN')}.`,
+          actionUrl: `/member-management/finance`
+        });
+      } catch (_) {}
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Thank you! Your project inquiry has been received. Our team will review and contact you shortly.',
+      lead: newLead,
+      isReferred: !!matchedAgent
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // AGENT AFFILIATE, WALLET & COMMISSION ROUTES
 // ============================================================
 
