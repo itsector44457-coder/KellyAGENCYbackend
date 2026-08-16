@@ -3,22 +3,31 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Create Nodemailer Transporter using Gmail SMTP App Password
-const gmailUser = process.env.GMAIL_USER || 'radhaagency4@gmail.com';
-const gmailPass = process.env.GMAIL_PASS || 'jahkhqfynjvbuwqt';
+// Create Nodemailer Transporter using Direct SSL Port 465 for maximum reliability
+const gmailUser = (process.env.GMAIL_USER || 'radhaagency4@gmail.com').trim();
+const rawPass = process.env.GMAIL_PASS || process.env.GMAIL_APP_PASSWORD || 'jahkhqfynjvbuwqt';
+const gmailPass = rawPass ? rawPass.replace(/\s+/g, '') : '';
 
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true, // Direct SSL
   auth: {
     user: gmailUser,
     pass: gmailPass,
   },
+  connectionTimeout: 15000,
+  greetingTimeout: 15000,
+  socketTimeout: 30000,
+  tls: {
+    rejectUnauthorized: false
+  }
 });
 
 // Verify connection configuration
 transporter.verify((error, success) => {
   if (error) {
-    console.error('❌ [Nodemailer Gmail SMTP Error]:', error.message);
+    console.warn('⚠️ [Nodemailer Gmail SMTP 465 Warning]:', error.message);
   } else {
     console.log('✅ [Nodemailer Gmail SMTP Ready]: Connected as', gmailUser);
   }
