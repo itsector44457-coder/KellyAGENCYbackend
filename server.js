@@ -1535,6 +1535,47 @@ app.get('/api/admin/agent-leads', async (req, res) => {
   }
 });
 
+
+// 12.1. PUT Admin/Finance Set Exact Custom Commission for a Lead
+app.put('/api/admin/agent-leads/:leadId/set-commission', async (req, res) => {
+  try {
+    const { leadId } = req.params;
+    const { commissionAmount, notes } = req.body;
+
+    const lead = await AgentLeadModel.findOne({ id: leadId });
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+
+    const newComm = Number(commissionAmount) || 0;
+    const oldComm = lead.commissionAmount || 0;
+    lead.commissionAmount = newComm;
+    if (notes !== undefined) lead.notes = notes;
+
+    // Adjust agent pipeline or wallet balance accordingly
+    const agent = await AgentModel.findOne({ id: lead.agentId });
+    if (agent && agent.id !== 'DIRECT_AGENCY') {
+      if (lead.commissionStatus === 'WALLET_CREDITED') {
+        const diff = newComm - oldComm;
+        agent.walletBalance = Math.max(0, (agent.walletBalance || 0) + diff);
+        agent.totalLifetimeEarned = Math.max(0, (agent.totalLifetimeEarned || 0) + diff);
+        await agent.save();
+      } else if (lead.commissionStatus === 'LOCKED_IN_PIPELINE') {
+        const diff = newComm - oldComm;
+        agent.pendingPipelineAmount = Math.max(0, (agent.pendingPipelineAmount || 0) + diff);
+        await agent.save();
+      }
+    }
+
+    await lead.save();
+    res.json({
+      success: true,
+      message: `Custom commission set to ₹${newComm.toLocaleString('en-IN')} by Finance.`,
+      lead
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 12. PUT Admin Update Lead Status & Commission Trigger
 app.put('/api/admin/agent-leads/:leadId/status', async (req, res) => {
   try {
