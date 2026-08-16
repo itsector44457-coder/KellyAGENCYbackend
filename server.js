@@ -1676,6 +1676,16 @@ app.post('/api/admin/process-agent-withdrawal', async (req, res) => {
       if (agent) {
         agent.totalWithdrawn = (agent.totalWithdrawn || 0) + withdrawal.amount;
         await agent.save();
+
+        // 📧 Send Email to Agent: Withdrawal Approved & Paid with UTR Number!
+        sendAgentWithdrawalApprovedEmail({
+          to: agent.email,
+          agentName: agent.name,
+          amount: withdrawal.amount,
+          payoutMethod: withdrawal.payoutMethod,
+          utrNumber: withdrawal.utrNumber,
+          remainingBalance: agent.walletBalance || 0
+        });
       }
 
       // Automatically create an EXPENSE record in Agency Finance Ledger!
@@ -1702,16 +1712,26 @@ app.post('/api/admin/process-agent-withdrawal', async (req, res) => {
         withdrawal
       });
     } else if (action === 'REJECT') {
+      const cleanReason = rejectionReason || 'Information mismatch or invalid account/UPI details';
       withdrawal.status = 'REJECTED';
-      withdrawal.rejectionReason = rejectionReason || 'Information mismatch or invalid account details';
+      withdrawal.rejectionReason = cleanReason;
       withdrawal.processedAt = new Date();
       withdrawal.processedBy = processedBy || 'Finance Officer';
       await withdrawal.save();
 
-      // Refund the amount back to agent's wallet balance
+      // 🔄 Refund the amount back to agent's available wallet balance!
       if (agent) {
         agent.walletBalance = (agent.walletBalance || 0) + withdrawal.amount;
         await agent.save();
+
+        // 📧 Send Email to Agent: Withdrawal Declined, Reason & Refund to Wallet!
+        sendAgentWithdrawalRejectedEmail({
+          to: agent.email,
+          agentName: agent.name,
+          amount: withdrawal.amount,
+          reason: cleanReason,
+          newWalletBalance: agent.walletBalance
+        });
       }
 
       res.json({

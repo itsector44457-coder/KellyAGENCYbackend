@@ -389,3 +389,167 @@ export async function sendAgentCommissionCreditedEmail({ to, agentName, projectT
     console.error('❌ [Commission Email Error]:', err.message);
   }
 }
+
+/**
+ * Send Notification when Agent Withdrawal is APPROVED & PAID
+ */
+export async function sendAgentWithdrawalApprovedEmail({ to, agentName, amount, payoutMethod, utrNumber, remainingBalance }) {
+  const recipient = to || 'agent@example.com';
+  const dashboardUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/agent/dashboard`;
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif; background-color: #1A1C11; color: #f1ece2; margin: 0; padding: 24px; }
+        .container { max-width: 580px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
+        .brand { font-size: 20px; font-weight: 900; letter-spacing: 2px; color: #b7e44c; text-transform: uppercase; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 14px; }
+        .title { font-size: 24px; font-weight: 700; color: #ffffff; margin-bottom: 12px; }
+        .badge-paid { display: inline-block; background-color: rgba(183, 228, 76, 0.2); color: #b7e44c; border: 1px solid #b7e44c; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; padding: 6px 14px; border-radius: 9999px; margin-bottom: 16px; }
+        .details-card { background-color: #1A1C11; border: 1px solid rgba(255,255,255,0.1); border-radius: 14px; padding: 20px; margin: 20px 0; }
+        .row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 13px; }
+        .row:last-child { border-bottom: none; }
+        .amount-hero { font-size: 36px; font-weight: 900; color: #b7e44c; font-family: monospace; text-align: center; margin: 10px 0; }
+        .btn { display: inline-block; background-color: #b7e44c; color: #111111; font-weight: 800; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; padding: 14px 28px; border-radius: 9999px; text-decoration: none; margin-top: 16px; }
+        .footer { margin-top: 32px; font-size: 11px; color: #888680; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px; text-align: center; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="brand">RADHA AGENCY • PAYOUT SUCCESS</div>
+        <div class="badge-paid">✓ Payout Completed & Transferred</div>
+        <div class="title">Payout Transferred: ₹${amount?.toLocaleString('en-IN')}</div>
+        <p style="font-size: 14px; color: #d1cfc7; line-height: 1.6;">
+          Hello <strong>${agentName}</strong>,<br/>
+          Your commission withdrawal request has been approved by Radha Agency Finance and funds have been transferred successfully.
+        </p>
+
+        <div class="details-card">
+          <div class="amount-hero">₹${amount?.toLocaleString('en-IN')}</div>
+          <div class="row">
+            <span style="color: #888680;">Payout Method:</span>
+            <strong style="color: #ffffff;">${payoutMethod || 'Bank / UPI Transfer'}</strong>
+          </div>
+          <div class="row">
+            <span style="color: #888680;">Bank / UPI UTR / Ref No:</span>
+            <strong style="color: #b7e44c; font-family: monospace;">${utrNumber || 'N/A'}</strong>
+          </div>
+          <div class="row">
+            <span style="color: #888680;">Processed Time:</span>
+            <span style="color: #ffffff;">${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</span>
+          </div>
+          <div class="row">
+            <span style="color: #888680;">Remaining Wallet Balance:</span>
+            <strong style="color: #ffffff;">₹${remainingBalance?.toLocaleString('en-IN')}</strong>
+          </div>
+        </div>
+
+        <div style="text-align: center;">
+          <a href="${dashboardUrl}" class="btn">View Agent Dashboard & Slip →</a>
+        </div>
+        <div class="footer">
+          © ${new Date().getFullYear()} RADHA AGENCY FINANCE DEPARTMENT.
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  try {
+    await transporter.sendMail({
+      from: `"Radha Agency Finance" <${gmailUser}>`,
+      to: recipient,
+      subject: `✅ Payout Completed: ₹${amount?.toLocaleString('en-IN')} Transferred (UTR: ${utrNumber})`,
+      html: htmlContent,
+    });
+    console.log(`🚀 [Withdrawal Approved Email Sent] To: ${recipient} | UTR: ${utrNumber}`);
+  } catch (err) {
+    console.error('❌ [Withdrawal Approved Email Error]:', err.message);
+  }
+}
+
+/**
+ * Send Notification when Agent Withdrawal is REJECTED & REFUNDED to Wallet
+ */
+export async function sendAgentWithdrawalRejectedEmail({ to, agentName, amount, reason, newWalletBalance }) {
+  const recipient = to || 'agent@example.com';
+  const dashboardUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/agent/dashboard`;
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif; background-color: #1A1C11; color: #f1ece2; margin: 0; padding: 24px; }
+        .container { max-width: 580px; margin: 0 auto; background-color: #24271B; border: 2px solid #ef4444; border-radius: 20px; padding: 32px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
+        .brand { font-size: 20px; font-weight: 900; letter-spacing: 2px; color: #ef4444; text-transform: uppercase; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 14px; }
+        .title { font-size: 24px; font-weight: 700; color: #ffffff; margin-bottom: 12px; }
+        .badge-refunded { display: inline-block; background-color: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid #ef4444; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; padding: 6px 14px; border-radius: 9999px; margin-bottom: 16px; }
+        .details-card { background-color: #1A1C11; border: 1px solid rgba(255,255,255,0.1); border-radius: 14px; padding: 20px; margin: 20px 0; }
+        .reason-box { background-color: rgba(239, 68, 68, 0.1); border-left: 4px solid #ef4444; padding: 14px; border-radius: 8px; margin: 16px 0; font-size: 13px; color: #fca5a5; }
+        .row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 13px; }
+        .row:last-child { border-bottom: none; }
+        .btn { display: inline-block; background-color: #b7e44c; color: #111111; font-weight: 800; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; padding: 14px 28px; border-radius: 9999px; text-decoration: none; margin-top: 16px; }
+        .footer { margin-top: 32px; font-size: 11px; color: #888680; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px; text-align: center; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="brand">RADHA AGENCY • PAYOUT UPDATE</div>
+        <div class="badge-refunded">⚠️ Request Declined & Refunded to Wallet</div>
+        <div class="title">Withdrawal Request Update (₹${amount?.toLocaleString('en-IN')})</div>
+        <p style="font-size: 14px; color: #d1cfc7; line-height: 1.6;">
+          Hello <strong>${agentName}</strong>,<br/>
+          Your withdrawal request of <strong>₹${amount?.toLocaleString('en-IN')}</strong> could not be processed and has been declined by Radha Agency Finance.
+        </p>
+
+        <div class="reason-box">
+          <strong>Reason Provided by Finance:</strong><br/>
+          ${reason || 'Bank details/UPI mismatch. Please verify your payout information in dashboard.'}
+        </div>
+
+        <div class="details-card">
+          <div class="row">
+            <span style="color: #888680;">Requested Amount:</span>
+            <strong style="color: #ffffff;">₹${amount?.toLocaleString('en-IN')}</strong>
+          </div>
+          <div class="row">
+            <span style="color: #888680;">Action Taken:</span>
+            <strong style="color: #b7e44c;">100% Refunded Back to Available Wallet</strong>
+          </div>
+          <div class="row">
+            <span style="color: #888680;">Updated Available Wallet Balance:</span>
+            <strong style="color: #b7e44c; font-size: 15px;">₹${newWalletBalance?.toLocaleString('en-IN')}</strong>
+          </div>
+        </div>
+
+        <p style="font-size: 13px; color: #a19f96;">
+          💡 <strong>What should you do?</strong> Please visit your Agent Dashboard, update your Bank Account or UPI ID details under "Payout Settings", and submit a new withdrawal request.
+        </p>
+
+        <div style="text-align: center;">
+          <a href="${dashboardUrl}" class="btn">Update Payout Details & Retry →</a>
+        </div>
+        <div class="footer">
+          © ${new Date().getFullYear()} RADHA AGENCY FINANCE DEPARTMENT.
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  try {
+    await transporter.sendMail({
+      from: `"Radha Agency Finance" <${gmailUser}>`,
+      to: recipient,
+      subject: `⚠️ Withdrawal Declined & Refunded to Wallet: ₹${amount?.toLocaleString('en-IN')} [Radha Agency]`,
+      html: htmlContent,
+    });
+    console.log(`🚀 [Withdrawal Rejected Email Sent] To: ${recipient} | Reason: ${reason}`);
+  } catch (err) {
+    console.error('❌ [Withdrawal Rejected Email Error]:', err.message);
+  }
+}
