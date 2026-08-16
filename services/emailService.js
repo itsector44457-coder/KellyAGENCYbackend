@@ -209,3 +209,183 @@ export async function sendPaymentApprovalConfirmationEmail({ to, clientName, pro
     return { success: false, error: error.message };
   }
 }
+
+
+/**
+ * Send 6-Digit Email OTP for Agent Signup Verification
+ */
+export async function sendAgentSignupOtpEmail({ to, agentName, otp }) {
+  const recipient = to || 'agent@example.com';
+  const name = agentName || 'Partner Agent';
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif; background-color: #1A1C11; color: #f1ece2; margin: 0; padding: 24px; }
+        .container { max-width: 580px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
+        .brand { font-size: 20px; font-weight: 900; letter-spacing: 2px; color: #b7e44c; text-transform: uppercase; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 14px; }
+        .title { font-size: 22px; font-weight: 700; color: #ffffff; margin-bottom: 12px; }
+        .message { font-size: 14px; line-height: 1.6; color: #d1cfc7; margin-bottom: 24px; }
+        .otp-box { background-color: #1A1C11; border: 2px dashed #b7e44c; border-radius: 12px; padding: 20px; text-align: center; margin: 24px 0; }
+        .otp-code { font-size: 38px; font-weight: 900; letter-spacing: 10px; color: #b7e44c; font-family: monospace; }
+        .expiry { font-size: 12px; color: #ff8a3d; margin-top: 8px; font-weight: 600; }
+        .footer { margin-top: 32px; font-size: 11px; color: #888680; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px; text-align: center; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="brand">RADHA AGENCY • PARTNER AFFILIATE PORTAL</div>
+        <div class="title">🔐 Verify Your Agent Email</div>
+        <div class="message">
+          Hello <strong>${name}</strong>,<br/><br/>
+          Thank you for joining the <strong>Radha Agency Partner & Affiliate Program</strong>. Please use the 6-digit verification code below to verify your email and activate your Agent account.
+        </div>
+        <div class="otp-box">
+          <div class="otp-code">${otp}</div>
+          <div class="expiry">⚠️ This code expires in 5 minutes. Do not share with anyone.</div>
+        </div>
+        <div class="message" style="font-size: 12px; color: #a19f96;">
+          If you did not request this verification, please ignore this email.
+        </div>
+        <div class="footer">
+          © ${new Date().getFullYear()} RADHA AGENCY. Official Partner & Commission System.
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  try {
+    const info = await transporter.sendMail({
+      from: `"Radha Agency Partner Program" <${gmailUser}>`,
+      to: recipient,
+      subject: `[${otp}] Radha Agency Agent Verification Code`,
+      html: htmlContent,
+    });
+    console.log(`🚀 [Agent OTP Sent] To: ${recipient} | MsgID: ${info.messageId}`);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error('❌ [Agent OTP Email Error]:', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Send Welcome Email to Agent with Referral Code
+ */
+export async function sendAgentWelcomeEmail({ to, agentName, referralCode, loginUrl }) {
+  const recipient = to || 'agent@example.com';
+  const portalUrl = loginUrl || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/agent/login`;
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif; background-color: #1A1C11; color: #f1ece2; margin: 0; padding: 24px; }
+        .container { max-width: 580px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
+        .brand { font-size: 20px; font-weight: 900; letter-spacing: 2px; color: #b7e44c; text-transform: uppercase; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 14px; }
+        .title { font-size: 24px; font-weight: 700; color: #ffffff; margin-bottom: 12px; }
+        .card { background-color: #1A1C11; border: 1px solid rgba(183, 228, 76, 0.3); border-radius: 12px; padding: 20px; margin: 20px 0; }
+        .code-box { font-size: 24px; font-weight: 800; color: #b7e44c; font-family: monospace; letter-spacing: 2px; }
+        .btn { display: inline-block; background-color: #b7e44c; color: #111111; font-weight: 800; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; padding: 14px 28px; border-radius: 9999px; text-decoration: none; margin-top: 16px; }
+        .footer { margin-top: 32px; font-size: 11px; color: #888680; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px; text-align: center; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="brand">RADHA AGENCY • PARTNER AFFILIATE</div>
+        <div class="title">🎉 Welcome to Radha Agency Partner Network, ${agentName}!</div>
+        <p style="font-size: 14px; color: #d1cfc7; line-height: 1.6;">
+          Your Agent account is active and verified. You are now eligible to earn <strong>10% commission</strong> on every client project closed through your referral!
+        </p>
+        <div class="card">
+          <div style="font-size: 11px; text-transform: uppercase; color: #888680; font-weight: 700; margin-bottom: 6px;">Your Unique Referral Code</div>
+          <div class="code-box">${referralCode}</div>
+          <div style="font-size: 12px; color: #a19f96; margin-top: 8px;">Share your link or submit client leads directly from your dashboard to earn commissions.</div>
+        </div>
+        <div style="text-align: center;">
+          <a href="${portalUrl}" class="btn">Go to Agent Dashboard →</a>
+        </div>
+        <div class="footer">
+          © ${new Date().getFullYear()} RADHA AGENCY DIGITAL MEDIA.
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  try {
+    await transporter.sendMail({
+      from: `"Radha Agency Partners" <${gmailUser}>`,
+      to: recipient,
+      subject: `🎉 Welcome to Radha Agency Partner Network! (Ref: ${referralCode})`,
+      html: htmlContent,
+    });
+  } catch (err) {
+    console.error('❌ [Welcome Email Error]:', err.message);
+  }
+}
+
+/**
+ * Send Notification when Commission is Unlocked & Credited to Agent Wallet
+ */
+export async function sendAgentCommissionCreditedEmail({ to, agentName, projectTitle, commissionAmount, newWalletBalance }) {
+  const recipient = to || 'agent@example.com';
+  const dashboardUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/agent/dashboard`;
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif; background-color: #1A1C11; color: #f1ece2; margin: 0; padding: 24px; }
+        .container { max-width: 580px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
+        .brand { font-size: 20px; font-weight: 900; letter-spacing: 2px; color: #b7e44c; text-transform: uppercase; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 14px; }
+        .title { font-size: 24px; font-weight: 700; color: #ffffff; margin-bottom: 12px; }
+        .wallet-card { background: linear-gradient(135deg, rgba(183, 228, 76, 0.15), rgba(36, 39, 27, 0.9)); border: 1px solid #b7e44c; border-radius: 16px; padding: 24px; margin: 20px 0; text-align: center; }
+        .amount { font-size: 36px; font-weight: 900; color: #b7e44c; font-family: monospace; }
+        .btn { display: inline-block; background-color: #b7e44c; color: #111111; font-weight: 800; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; padding: 14px 28px; border-radius: 9999px; text-decoration: none; margin-top: 16px; }
+        .footer { margin-top: 32px; font-size: 11px; color: #888680; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px; text-align: center; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="brand">RADHA AGENCY • COMMISSION EARNED</div>
+        <div class="title">💰 ₹${commissionAmount?.toLocaleString('en-IN')} Credited to Your Wallet!</div>
+        <p style="font-size: 14px; color: #d1cfc7; line-height: 1.6;">
+          Congratulations <strong>${agentName}</strong>!<br/>
+          Your referred client for <strong>"${projectTitle}"</strong> has confirmed the project and completed advance payment. Your commission is now unlocked and available in your wallet!
+        </p>
+        <div class="wallet-card">
+          <div style="font-size: 12px; text-transform: uppercase; color: #d1cfc7; font-weight: 700; letter-spacing: 1px; margin-bottom: 8px;">Commission Credited</div>
+          <div class="amount">+ ₹${commissionAmount?.toLocaleString('en-IN')}</div>
+          <div style="font-size: 13px; color: #ffffff; margin-top: 10px;">Available Wallet Balance: <strong>₹${newWalletBalance?.toLocaleString('en-IN')}</strong></div>
+        </div>
+        <div style="text-align: center;">
+          <a href="${dashboardUrl}" class="btn">View Wallet & Request Payout →</a>
+        </div>
+        <div class="footer">
+          © ${new Date().getFullYear()} RADHA AGENCY. Official Partner System.
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  try {
+    await transporter.sendMail({
+      from: `"Radha Agency Finance" <${gmailUser}>`,
+      to: recipient,
+      subject: `💰 Commission Unlocked: ₹${commissionAmount?.toLocaleString('en-IN')} credited for "${projectTitle}"`,
+      html: htmlContent,
+    });
+  } catch (err) {
+    console.error('❌ [Commission Email Error]:', err.message);
+  }
+}

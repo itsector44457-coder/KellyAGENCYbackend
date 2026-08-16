@@ -12,7 +12,7 @@ import mongoose from 'mongoose';
 
 import { v2 as cloudinary } from 'cloudinary';
 
-import { sendMemberNotificationEmail, sendClientProjectPortalEmail, sendPaymentApprovalConfirmationEmail } from './services/emailService.js';
+import { sendMemberNotificationEmail, sendClientProjectPortalEmail, sendPaymentApprovalConfirmationEmail, sendAgentSignupOtpEmail, sendAgentWelcomeEmail, sendAgentCommissionCreditedEmail } from './services/emailService.js';
 import { MemberModel } from './models/Member.js';
 import { TaskModel } from './models/Task.js';
 import { ProjectModel } from './models/Project.js';
@@ -20,6 +20,10 @@ import { ActivityModel } from './models/Activity.js';
 import { NotificationModel } from './models/Notification.js';
 import { AgencyFinanceModel } from './models/AgencyFinance.js';
 import { AgencySettingsModel } from './models/AgencySettings.js';
+import { AgentModel } from './models/Agent.js';
+import { AgentOtpModel } from './models/AgentOtp.js';
+import { AgentLeadModel } from './models/AgentLead.js';
+import { AgentWithdrawalModel } from './models/AgentWithdrawal.js';
 
 dotenv.config();
 
@@ -670,6 +674,56 @@ app.post('/api/projects/:id/approve-advance', async (req, res) => {
       });
     } catch (_) { /* non-critical */ }
 
+    // --- AGENT COMMISSION UNLOCK HOOK ---
+    try {
+      // Find if this project is linked to an agent lead or referred by an agent
+      const linkedLead = await AgentLeadModel.findOne({
+        $or: [
+          { linkedProjectId: project.id },
+          { clientEmail: project.clientEmail?.toLowerCase() }
+        ]
+      });
+
+      if (linkedLead && linkedLead.commissionStatus === 'LOCKED_IN_PIPELINE') {
+        const commAmt = linkedLead.commissionAmount || (project.proposal?.totalCost || 25000) * 0.10;
+        
+        linkedLead.status = 'PROJECT_CONFIRMED';
+        linkedLead.commissionStatus = 'WALLET_CREDITED';
+        linkedLead.confirmedAt = new Date();
+        linkedLead.linkedProjectId = project.id;
+        await linkedLead.save();
+
+        const agent = await AgentModel.findOne({ id: linkedLead.agentId });
+        if (agent) {
+          agent.walletBalance = (agent.walletBalance || 0) + commAmt;
+          agent.pendingPipelineAmount = Math.max(0, (agent.pendingPipelineAmount || 0) - commAmt);
+          agent.totalLifetimeEarned = (agent.totalLifetimeEarned || 0) + commAmt;
+          await agent.save();
+
+          console.log(`💰 [Commission Unlocked] ₹${commAmt} credited to Agent ${agent.name} (${agent.id})`);
+
+          sendAgentCommissionCreditedEmail({
+            to: agent.email,
+            agentName: agent.name,
+            projectTitle: project.title,
+            commissionAmount: commAmt,
+            newWalletBalance: agent.walletBalance
+          });
+
+          await NotificationModel.create({
+            id: `notif-${Date.now()}`,
+            targetMemberId: 'all',
+            type: 'PAYMENT_RECEIVED',
+            title: `Agent Commission Credited: ₹${commAmt.toLocaleString('en-IN')}`,
+            message: `Agent ${agent.name} earned commission for confirmed project "${project.title}".`,
+            actionUrl: `/member-management/finance`
+          });
+        }
+      }
+    } catch (commErr) {
+      console.error('⚠️ [Agent Commission Hook Error]:', commErr.message);
+    }
+
     // Email Confirmation & Documents Package to Client Email!
     sendPaymentApprovalConfirmationEmail({
       to: project.clientEmail,
@@ -979,6 +1033,521 @@ app.get('/api/notifications', async (req, res) => {
 // ============================================================
 // START SERVER → THEN CONNECT DB
 // ============================================================
+
+// ============================================================
+// AGENT AFFILIATE, WALLET & COMMISSION ROUTES
+// ============================================================
+
+// 1. POST Send 6-Digit Email OTP for Agent Signup
+app.post('/api/agent/send-signup-otp', async (req, res) => {
+  try {
+    const { email, name } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+
+    const cleanEmail = email.toLowerCase().trim();
+    const existingAgent = await AgentModel.findOne({ email: cleanEmail });
+    if (existingAgent) {
+      return res.status(400).json({ error: 'An agent account with this email already exists. Please login.' });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 mins
+
+    await AgentOtpModel.findOneAndUpdate(
+      { email: cleanEmail },
+      { otp, expiresAt, createdAt: new Date() },
+      { upsert: true, new: true }
+    );
+
+    const emailRes = await sendAgentSignupOtpEmail({
+      to: cleanEmail,
+      agentName: name || 'Partner Agent',
+      otp
+    });
+
+    if (!emailRes.success) {
+      return res.status(500).json({ error: 'Failed to send OTP email. Please check email address.' });
+    }
+
+    res.json({ success: true, message: 'Verification OTP sent to your email.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 2. POST Verify OTP & Complete Agent Signup
+app.post('/api/agent/verify-otp-and-signup', async (req, res) => {
+  try {
+    const { name, email, phone, password, otp } = req.body;
+    if (!email || !otp || !name || !password) {
+      return res.status(400).json({ error: 'Name, email, password and OTP are required' });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+
+    // Verify OTP
+    const otpRecord = await AgentOtpModel.findOne({ email: cleanEmail });
+    if (!otpRecord) {
+      return res.status(400).json({ error: 'No OTP requested for this email. Please request a new OTP.' });
+    }
+
+    if (new Date() > otpRecord.expiresAt) {
+      await AgentOtpModel.deleteOne({ email: cleanEmail });
+      return res.status(400).json({ error: 'OTP has expired. Please request a new OTP.' });
+    }
+
+    if (otpRecord.otp !== otp.toString().trim()) {
+      return res.status(400).json({ error: 'Invalid 6-digit OTP code.' });
+    }
+
+    // Generate Agent ID & Unique Referral Code
+    const shortName = name.trim().split(' ')[0].replace(/[^a-zA-Z]/g, '').toUpperCase() || 'AGT';
+    const randNum = Math.floor(100 + Math.random() * 900);
+    const referralCode = `RADHA-${shortName}${randNum}`;
+    const agentId = `AGT-${Date.now().toString().slice(-5)}`;
+
+    const newAgent = await AgentModel.create({
+      id: agentId,
+      name: name.trim(),
+      email: cleanEmail,
+      phone: phone || '',
+      password,
+      referralCode,
+      isEmailVerified: true,
+      status: 'ACTIVE',
+      commissionRatePercent: 10,
+      walletBalance: 0,
+      pendingPipelineAmount: 0,
+      totalWithdrawn: 0,
+      totalLifetimeEarned: 0,
+    });
+
+    await AgentOtpModel.deleteOne({ email: cleanEmail });
+
+    // Send Welcome Email
+    sendAgentWelcomeEmail({
+      to: cleanEmail,
+      agentName: newAgent.name,
+      referralCode: newAgent.referralCode,
+      loginUrl: `${FRONTEND_URL}/agent/login`
+    });
+
+    const agentObj = newAgent.toObject();
+    delete agentObj.password;
+
+    res.status(201).json({ success: true, message: 'Agent account verified and created successfully!', agent: agentObj });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3. POST Agent Login
+app.post('/api/agent/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
+
+    const cleanEmail = email.toLowerCase().trim();
+    const agent = await AgentModel.findOne({ email: cleanEmail });
+    if (!agent) return res.status(404).json({ error: 'No agent account found with this email' });
+
+    if (agent.password !== password) {
+      return res.status(401).json({ error: 'Incorrect password' });
+    }
+
+    const agentObj = agent.toObject();
+    delete agentObj.password;
+
+    res.json({ success: true, agent: agentObj });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 4. GET Agent Profile & Live Stats
+app.get('/api/agent/profile/:agentId', async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const agent = await AgentModel.findOne({ id: agentId });
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+    const leads = await AgentLeadModel.find({ agentId });
+    const withdrawals = await AgentWithdrawalModel.find({ agentId });
+
+    const totalLeads = leads.length;
+    const confirmedDeals = leads.filter(l => ['PROJECT_CONFIRMED', 'IN_PROGRESS', 'COMPLETED'].includes(l.status)).length;
+    const pendingLeads = leads.filter(l => ['LEAD_SUBMITTED', 'IN_DISCUSSION', 'PROPOSAL_SENT'].includes(l.status)).length;
+
+    const agentObj = agent.toObject();
+    delete agentObj.password;
+
+    res.json({
+      success: true,
+      agent: agentObj,
+      stats: {
+        totalLeads,
+        confirmedDeals,
+        pendingLeads,
+        totalWithdrawalsCount: withdrawals.length
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 5. PUT Update Agent Payout / Bank Details
+app.put('/api/agent/payout-details/:agentId', async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const { accountHolderName, bankName, accountNumber, ifscCode, upiId } = req.body;
+
+    const agent = await AgentModel.findOneAndUpdate(
+      { id: agentId },
+      {
+        payoutDetails: {
+          accountHolderName: accountHolderName || '',
+          bankName: bankName || '',
+          accountNumber: accountNumber || '',
+          ifscCode: ifscCode || '',
+          upiId: upiId || ''
+        }
+      },
+      { new: true }
+    );
+
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+    const agentObj = agent.toObject();
+    delete agentObj.password;
+
+    res.json({ success: true, message: 'Payout details updated successfully', agent: agentObj });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 6. POST Submit New Client Lead by Agent
+app.post('/api/agent/leads', async (req, res) => {
+  try {
+    const {
+      agentId,
+      clientName,
+      clientEmail,
+      clientPhone,
+      companyName,
+      projectTitle,
+      projectType,
+      projectBudget,
+      requirements
+    } = req.body;
+
+    if (!agentId || !clientName || !clientEmail || !projectTitle || !projectBudget) {
+      return res.status(400).json({ error: 'Agent ID, client name, email, project title, and budget are required' });
+    }
+
+    const agent = await AgentModel.findOne({ id: agentId });
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+    const budgetNum = Number(projectBudget) || 25000;
+    const commissionPercent = agent.commissionRatePercent || 10;
+    const commissionAmount = Math.round(budgetNum * (commissionPercent / 100));
+
+    const leadId = `LEAD-${Date.now().toString().slice(-5)}`;
+
+    const newLead = await AgentLeadModel.create({
+      id: leadId,
+      agentId: agent.id,
+      agentName: agent.name,
+      agentEmail: agent.email,
+      agentReferralCode: agent.referralCode,
+      clientName: clientName.trim(),
+      clientEmail: clientEmail.toLowerCase().trim(),
+      clientPhone: clientPhone || '',
+      companyName: companyName || '',
+      projectTitle: projectTitle.trim(),
+      projectType: projectType || 'Custom Web / App',
+      projectBudget: budgetNum,
+      requirements: requirements || '',
+      status: 'LEAD_SUBMITTED',
+      commissionRatePercent: commissionPercent,
+      commissionAmount,
+      commissionStatus: 'LOCKED_IN_PIPELINE'
+    });
+
+    // Update agent's pending pipeline
+    agent.pendingPipelineAmount = (agent.pendingPipelineAmount || 0) + commissionAmount;
+    await agent.save();
+
+    // Create Notification for Team OS Leadership / Finance
+    try {
+      await NotificationModel.create({
+        id: `notif-${Date.now()}`,
+        targetMemberId: 'all',
+        type: 'TASK_ASSIGNED',
+        title: `New Client Lead from Agent ${agent.name}`,
+        message: `${agent.name} submitted client lead for "${projectTitle}" (Budget: ₹${budgetNum.toLocaleString('en-IN')}).`,
+        actionUrl: `/member-management/finance`
+      });
+    } catch (_) { /* non-critical */ }
+
+    res.status(201).json({
+      success: true,
+      message: 'Client lead submitted successfully! Track progress in your pipeline.',
+      lead: newLead
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 7. GET Agent Leads List
+app.get('/api/agent/leads/:agentId', async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const leads = await AgentLeadModel.find({ agentId }).sort({ submittedAt: -1 });
+    res.json({ success: true, leads });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 8. POST Agent Request Withdrawal / Payout
+app.post('/api/agent/withdraw-request', async (req, res) => {
+  try {
+    const { agentId, amount, payoutMethod } = req.body;
+    if (!agentId || !amount) return res.status(400).json({ error: 'Agent ID and amount are required' });
+
+    const withdrawAmount = Number(amount);
+    if (withdrawAmount <= 0) return res.status(400).json({ error: 'Withdrawal amount must be greater than zero' });
+
+    const agent = await AgentModel.findOne({ id: agentId });
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+    if (agent.walletBalance < withdrawAmount) {
+      return res.status(400).json({
+        error: `Insufficient wallet balance. Available: ₹${agent.walletBalance.toLocaleString('en-IN')}`
+      });
+    }
+
+    const withdrawalId = `WD-${Date.now().toString().slice(-6)}`;
+
+    const withdrawal = await AgentWithdrawalModel.create({
+      withdrawalId,
+      agentId: agent.id,
+      agentName: agent.name,
+      agentEmail: agent.email,
+      amount: withdrawAmount,
+      payoutMethod: payoutMethod || (agent.payoutDetails?.upiId ? 'UPI' : 'BANK_TRANSFER'),
+      payoutDetails: agent.payoutDetails || {},
+      status: 'PENDING_APPROVAL'
+    });
+
+    // Deduct from wallet balance temporarily while pending
+    agent.walletBalance = agent.walletBalance - withdrawAmount;
+    await agent.save();
+
+    // Create Notification for Finance Team
+    try {
+      await NotificationModel.create({
+        id: `notif-${Date.now()}`,
+        targetMemberId: 'all',
+        type: 'PAYMENT_RECEIVED',
+        title: `Agent Withdrawal Request: ₹${withdrawAmount.toLocaleString('en-IN')}`,
+        message: `Agent ${agent.name} has requested a payout of ₹${withdrawAmount.toLocaleString('en-IN')}.`,
+        actionUrl: `/member-management/finance`
+      });
+    } catch (_) { /* non-critical */ }
+
+    res.status(201).json({
+      success: true,
+      message: 'Withdrawal request submitted to Finance Team for processing.',
+      withdrawal,
+      remainingWalletBalance: agent.walletBalance
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 9. GET Agent Withdrawals History
+app.get('/api/agent/withdrawals/:agentId', async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const withdrawals = await AgentWithdrawalModel.find({ agentId }).sort({ requestedAt: -1 });
+    res.json({ success: true, withdrawals });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// ADMIN / FINANCE AGENT MANAGEMENT ROUTES
+// ============================================================
+
+// 10. GET All Agents (For Team OS Finance & Leadership)
+app.get('/api/admin/agents', async (req, res) => {
+  try {
+    const agents = await AgentModel.find({}).sort({ createdAt: -1 });
+    const sanitized = agents.map(a => {
+      const obj = a.toObject();
+      delete obj.password;
+      return obj;
+    });
+    res.json({ success: true, agents: sanitized });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 11. GET All Agent Leads (For Team OS Finance & Leadership)
+app.get('/api/admin/agent-leads', async (req, res) => {
+  try {
+    const leads = await AgentLeadModel.find({}).sort({ submittedAt: -1 });
+    res.json({ success: true, leads });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 12. PUT Admin Update Lead Status & Commission Trigger
+app.put('/api/admin/agent-leads/:leadId/status', async (req, res) => {
+  try {
+    const { leadId } = req.params;
+    const { status, notes } = req.body;
+
+    const lead = await AgentLeadModel.findOne({ id: leadId });
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+
+    const prevStatus = lead.status;
+    lead.status = status;
+    if (notes !== undefined) lead.notes = notes;
+
+    // If moving to PROJECT_CONFIRMED and commission not yet credited -> Unlock commission!
+    if (status === 'PROJECT_CONFIRMED' && lead.commissionStatus === 'LOCKED_IN_PIPELINE') {
+      lead.commissionStatus = 'WALLET_CREDITED';
+      lead.confirmedAt = new Date();
+
+      const agent = await AgentModel.findOne({ id: lead.agentId });
+      if (agent) {
+        agent.walletBalance = (agent.walletBalance || 0) + lead.commissionAmount;
+        agent.pendingPipelineAmount = Math.max(0, (agent.pendingPipelineAmount || 0) - lead.commissionAmount);
+        agent.totalLifetimeEarned = (agent.totalLifetimeEarned || 0) + lead.commissionAmount;
+        await agent.save();
+
+        sendAgentCommissionCreditedEmail({
+          to: agent.email,
+          agentName: agent.name,
+          projectTitle: lead.projectTitle,
+          commissionAmount: lead.commissionAmount,
+          newWalletBalance: agent.walletBalance
+        });
+      }
+    } else if (status === 'LOST_REJECTED' && prevStatus !== 'LOST_REJECTED') {
+      // Remove from pending pipeline
+      const agent = await AgentModel.findOne({ id: lead.agentId });
+      if (agent) {
+        agent.pendingPipelineAmount = Math.max(0, (agent.pendingPipelineAmount || 0) - lead.commissionAmount);
+        await agent.save();
+      }
+    }
+
+    await lead.save();
+    res.json({ success: true, message: `Lead status updated to ${status}`, lead });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 13. GET All Agent Withdrawals (For Team OS Finance)
+app.get('/api/admin/agent-withdrawals', async (req, res) => {
+  try {
+    const withdrawals = await AgentWithdrawalModel.find({}).sort({ requestedAt: -1 });
+    res.json({ success: true, withdrawals });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 14. POST Process Agent Withdrawal (Approve & Pay OR Reject)
+app.post('/api/admin/process-agent-withdrawal', async (req, res) => {
+  try {
+    const { withdrawalId, action, utrNumber, rejectionReason, processedBy } = req.body;
+    if (!withdrawalId || !action) {
+      return res.status(400).json({ error: 'Withdrawal ID and action (APPROVE or REJECT) are required' });
+    }
+
+    const withdrawal = await AgentWithdrawalModel.findOne({ withdrawalId });
+    if (!withdrawal) return res.status(404).json({ error: 'Withdrawal request not found' });
+
+    if (withdrawal.status !== 'PENDING_APPROVAL') {
+      return res.status(400).json({ error: `Withdrawal is already ${withdrawal.status}` });
+    }
+
+    const agent = await AgentModel.findOne({ id: withdrawal.agentId });
+
+    if (action === 'APPROVE') {
+      withdrawal.status = 'APPROVED_AND_PAID';
+      withdrawal.utrNumber = utrNumber || `TXN-${Date.now().toString().slice(-8)}`;
+      withdrawal.processedAt = new Date();
+      withdrawal.processedBy = processedBy || 'Finance Officer';
+      await withdrawal.save();
+
+      if (agent) {
+        agent.totalWithdrawn = (agent.totalWithdrawn || 0) + withdrawal.amount;
+        await agent.save();
+      }
+
+      // Automatically create an EXPENSE record in Agency Finance Ledger!
+      try {
+        await AgencyFinanceModel.create({
+          id: `afin-comm-${Date.now()}`,
+          type: 'EXPENSE',
+          title: `Agent Commission Payout - ${withdrawal.agentName} (${withdrawal.agentId})`,
+          category: 'SALARIES_PAYROLL',
+          amount: withdrawal.amount,
+          party: withdrawal.agentName,
+          date: new Date().toISOString().split('T')[0],
+          paymentMethod: withdrawal.payoutMethod === 'UPI' ? 'UPI' : 'BANK_TRANSFER',
+          notes: `Withdrawal ID: ${withdrawal.withdrawalId} | UTR/Ref: ${withdrawal.utrNumber}`,
+          recordedBy: processedBy || 'Finance Officer'
+        });
+      } catch (finErr) {
+        console.error('⚠️ [Finance Ledger Sync Error]:', finErr.message);
+      }
+
+      res.json({
+        success: true,
+        message: `Withdrawal of ₹${withdrawal.amount.toLocaleString('en-IN')} approved and marked as PAID.`,
+        withdrawal
+      });
+    } else if (action === 'REJECT') {
+      withdrawal.status = 'REJECTED';
+      withdrawal.rejectionReason = rejectionReason || 'Information mismatch or invalid account details';
+      withdrawal.processedAt = new Date();
+      withdrawal.processedBy = processedBy || 'Finance Officer';
+      await withdrawal.save();
+
+      // Refund the amount back to agent's wallet balance
+      if (agent) {
+        agent.walletBalance = (agent.walletBalance || 0) + withdrawal.amount;
+        await agent.save();
+      }
+
+      res.json({
+        success: true,
+        message: 'Withdrawal rejected and amount refunded back to agent wallet.',
+        withdrawal
+      });
+    } else {
+      res.status(400).json({ error: 'Invalid action. Must be APPROVE or REJECT.' });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 app.listen(PORT, () => {
   console.log('\n==================================================');
   console.log('🚀 RADHA AGENCY TEAM OS BACKEND SERVER');
