@@ -12,6 +12,7 @@ const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
   port: 465,
   secure: true, // Direct SSL
+  family: 4,    // Force IPv4 — prevents IPv6 DNS / socket timeout on Windows & Cloud
   auth: {
     user: gmailUser,
     pass: gmailPass,
