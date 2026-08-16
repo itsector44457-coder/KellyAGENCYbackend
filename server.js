@@ -12,7 +12,17 @@ import mongoose from 'mongoose';
 
 import { v2 as cloudinary } from 'cloudinary';
 
-import { sendMemberNotificationEmail, sendClientProjectPortalEmail, sendPaymentApprovalConfirmationEmail, sendAgentSignupOtpEmail, sendAgentWelcomeEmail, sendAgentCommissionCreditedEmail } from './services/emailService.js';
+import { 
+  sendMemberNotificationEmail, 
+  sendClientProjectPortalEmail, 
+  sendPaymentApprovalConfirmationEmail, 
+  sendAgentSignupOtpEmail, 
+  sendAgentWelcomeEmail, 
+  sendAgentCommissionCreditedEmail,
+  sendAgentWithdrawalApprovedEmail,
+  sendAgentWithdrawalRejectedEmail,
+  sendPasswordResetOtpEmail
+} from './services/emailService.js';
 import { MemberModel } from './models/Member.js';
 import { TaskModel } from './models/Task.js';
 import { ProjectModel } from './models/Project.js';
