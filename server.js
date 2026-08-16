@@ -233,7 +233,21 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(503).json({ error: 'Database is connecting. Please try again in a moment.' });
     }
 
-    const member = await MemberModel.findOne({ email: email.toLowerCase().trim() });
+    const inputEmail = email.toLowerCase().trim();
+    // Match exact email or allow both @radhaagency.in and @kellyagency.in
+    const altEmail = inputEmail.includes('@radhaagency.in')
+      ? inputEmail.replace('@radhaagency.in', '@kellyagency.in')
+      : inputEmail.replace('@kellyagency.in', '@radhaagency.in');
+
+    let member = await MemberModel.findOne({
+      $or: [{ email: inputEmail }, { email: altEmail }]
+    });
+
+    // Auto-update email to @radhaagency.in if it was old domain
+    if (member && member.email.includes('@kellyagency.in')) {
+      member.email = member.email.replace('@kellyagency.in', '@radhaagency.in');
+      await member.save();
+    }
     if (!member) return res.status(401).json({ error: 'Invalid email or password' });
     if (member.password !== password) return res.status(401).json({ error: 'Invalid email or password' });
 
