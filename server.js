@@ -206,6 +206,17 @@ async function seedDatabase() {
 // ============================================================
 // HEALTH CHECK
 // ============================================================
+
+// Root Server Landing Route
+app.get('/', (req, res) => {
+  res.json({
+    status: 'ONLINE',
+    system: 'Radha Agency Team OS Backend API',
+    health: '/api/health',
+    timestamp: new Date().toISOString()
+  });
+});
+
 app.get('/api/health', (req, res) => {
   const dbState = ['disconnected', 'connected', 'connecting', 'disconnecting'];
   res.json({
