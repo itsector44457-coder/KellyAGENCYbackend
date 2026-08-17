@@ -3,18 +3,26 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Create 100% Pure Nodemailer Transporter for Gmail SMTP
+// Configuration
 const gmailUser = (process.env.GMAIL_USER || 'radhaagency4@gmail.com').trim();
 const rawPass = process.env.GMAIL_PASS || process.env.GMAIL_APP_PASSWORD || 'jahkhqfynjvbuwqt';
 const gmailPass = rawPass ? rawPass.replace(/\s+/g, '') : '';
+const resendApiKey = process.env.RESEND_API_KEY ? process.env.RESEND_API_KEY.trim() : null;
+const brevoApiKey = process.env.BREVO_API_KEY ? process.env.BREVO_API_KEY.trim() : null;
 
-// Primary Nodemailer Gmail Transporter
+// Primary SSL Transporter
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true,
+  family: 4, // Force IPv4
   auth: {
     user: gmailUser,
     pass: gmailPass,
   },
+  connectionTimeout: 4000, // Quick 4s timeout - never hang the server for 30s!
+  greetingTimeout: 4000,
+  socketTimeout: 6000,
   tls: {
     rejectUnauthorized: false
   }
@@ -31,25 +39,76 @@ const fallbackTransporter = nodemailer.createTransport({
     user: gmailUser,
     pass: gmailPass,
   },
+  connectionTimeout: 4000,
+  greetingTimeout: 4000,
+  socketTimeout: 6000,
   tls: {
     rejectUnauthorized: false
   }
 });
 
-// Verify connection on startup
-transporter.verify((error) => {
-  if (error) {
-    console.warn('⚠️ [Nodemailer Service Warning]:', error.message);
-  } else {
-    console.log('✅ [Nodemailer Gmail Ready]: Connected as', gmailUser);
-  }
-});
-
-// Pure Nodemailer send helper with automatic transport fallback
-async function sendNodemailerEmail({ to, subject, htmlContent }) {
+/**
+ * Universal Ultra-Fast Email Dispatcher
+ * 1. Checks HTTPS REST APIs (Resend / Brevo) - Port 443 (Never blocked by Render cloud firewalls)
+ * 2. Tries Nodemailer Direct SSL 465
+ * 3. Tries Nodemailer Port 587 TLS
+ */
+export async function sendUniversalEmail({ to, subject, htmlContent }) {
   const recipient = to ? to.trim() : gmailUser;
 
-  // Try Primary Transporter (service: 'gmail')
+  // 1. Resend API (HTTPS Port 443)
+  if (resendApiKey) {
+    try {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${resendApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          from: `Radha Agency <${process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev'}>`,
+          to: [recipient],
+          subject,
+          html: htmlContent
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        console.log(`🚀 [Resend HTTPS Sent] To: ${recipient} | ID: ${data.id}`);
+        return { success: true, messageId: data.id };
+      }
+    } catch (e) {
+      console.warn('⚠️ [Resend API failed]:', e.message);
+    }
+  }
+
+  // 2. Brevo API (HTTPS Port 443)
+  if (brevoApiKey) {
+    try {
+      const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': brevoApiKey,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          sender: { name: 'Radha Agency', email: gmailUser },
+          to: [{ email: recipient }],
+          subject,
+          htmlContent
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        console.log(`🚀 [Brevo HTTPS Sent] To: ${recipient} | ID: ${data.messageId}`);
+        return { success: true, messageId: data.messageId };
+      }
+    } catch (e) {
+      console.warn('⚠️ [Brevo API failed]:', e.message);
+    }
+  }
+
+  // 3. Primary Nodemailer SSL 465
   try {
     const info = await transporter.sendMail({
       from: `"Radha Agency" <${gmailUser}>`,
@@ -57,12 +116,12 @@ async function sendNodemailerEmail({ to, subject, htmlContent }) {
       subject,
       html: htmlContent,
     });
-    console.log(`🚀 [Nodemailer Sent] To: ${recipient} | MsgID: ${info.messageId}`);
+    console.log(`🚀 [Nodemailer Port 465 Sent] To: ${recipient} | MsgID: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
   } catch (err1) {
-    console.warn(`⚠️ [Nodemailer Primary failed, retrying with Port 587 TLS...]: ${err1.message}`);
-    
-    // Fallback Transporter (smtp.gmail.com:587 TLS IPv4)
+    console.warn(`⚠️ [Nodemailer 465 Timeout/Blocked]: ${err1.message}. Retrying on Port 587...`);
+
+    // 4. Fallback Nodemailer TLS 587
     try {
       const info2 = await fallbackTransporter.sendMail({
         from: `"Radha Agency" <${gmailUser}>`,
@@ -70,186 +129,95 @@ async function sendNodemailerEmail({ to, subject, htmlContent }) {
         subject,
         html: htmlContent,
       });
-      console.log(`🚀 [Nodemailer Fallback Sent] To: ${recipient} | MsgID: ${info2.messageId}`);
+      console.log(`🚀 [Nodemailer Port 587 Sent] To: ${recipient} | MsgID: ${info2.messageId}`);
       return { success: true, messageId: info2.messageId };
     } catch (err2) {
-      console.error(`❌ [Nodemailer Error]: ${err2.message}`);
+      console.error(`❌ [SMTP Cloud Firewall Blocked]: ${err2.message}`);
       return { success: false, error: err2.message };
     }
   }
 }
 
 /**
- * Send HTML Email Notification to Radha Agency Member via Gmail SMTP
+ * Send HTML Email Notification to Radha Agency Member
  */
 export async function sendMemberNotificationEmail({ to, subject, title, message, details, actionUrl }) {
   const recipient = to || 'radhaagency4@gmail.com';
-
   const htmlContent = `
     <!DOCTYPE html>
     <html>
-    <head>
-      <meta charset="utf-8">
-      <style>
-        body { font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif; background-color: #1A1C11; color: #f1ece2; margin: 0; padding: 24px; }
-        .container { max-width: 600px; margin: 0 auto; background-color: #24271B; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 16px; padding: 32px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
-        .brand { font-size: 20px; font-weight: 700; letter-spacing: 2px; color: #b7e44c; text-transform: uppercase; margin-bottom: 24px; border-b: 1px solid rgba(255,255,255,0.1); padding-bottom: 16px; }
-        .title { font-size: 22px; font-weight: 600; color: #ffffff; margin-bottom: 16px; }
-        .message { font-size: 14px; line-height: 1.6; color: #d1cfc7; margin-bottom: 24px; }
-        .details-box { background-color: #1A1C11; border-left: 4px solid #b7e44c; padding: 16px; border-radius: 8px; margin-bottom: 24px; font-size: 13px; color: #e1dfd7; }
-        .btn { display: inline-block; background-color: #b7e44c; color: #111111; font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; padding: 12px 24px; border-radius: 9999px; text-decoration: none; }
-        .footer { margin-top: 32px; font-size: 11px; color: #888680; border-t: 1px solid rgba(255,255,255,0.1); pt: 16px; text-align: center; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="brand">RADHA AGENCY • TEAM OPERATING SYSTEM</div>
-        <div class="title">${title || subject}</div>
-        <div class="message">${message}</div>
-        ${details ? `<div class="details-box">${details}</div>` : ''}
-        ${actionUrl ? `<a href="${actionUrl}" class="btn">Open System Module</a>` : ''}
-        <div class="footer">
-          © ${new Date().getFullYear()} RADHA AGENCY. Official Team Notification System.
-        </div>
+    <head><meta charset="utf-8"></head>
+    <body style="font-family: 'Space Grotesk', system-ui, sans-serif; background-color: #1A1C11; color: #f1ece2; padding: 24px;">
+      <div style="max-width: 580px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px;">
+        <div style="font-size: 18px; font-weight: 900; color: #b7e44c; margin-bottom: 16px;">RADHA AGENCY • INTERNAL OS</div>
+        <div style="font-size: 22px; font-weight: 700; color: #fff; margin-bottom: 12px;">${title || 'System Notification'}</div>
+        <p style="font-size: 14px; color: #d1cfc7; line-height: 1.6;">${message}</p>
+        ${details ? `<div style="background-color: #1A1C11; border-radius: 10px; padding: 16px; margin: 16px 0; font-size: 13px;">${details}</div>` : ''}
+        ${actionUrl ? `<div style="text-align: center; margin-top: 20px;"><a href="${actionUrl}" style="background-color: #b7e44c; color: #111; font-weight: 800; font-size: 12px; text-transform: uppercase; padding: 12px 24px; border-radius: 9999px; text-decoration: none;">View in Team OS →</a></div>` : ''}
+        <div style="margin-top: 32px; font-size: 11px; color: #888680; text-align: center;">© ${new Date().getFullYear()} RADHA AGENCY. Confidential.</div>
       </div>
     </body>
     </html>
   `;
-
-  console.log(`[Gmail Nodemailer Dispatching] To: ${recipient} | Subject: "${subject}"`);
-
-  try {
-    const info = await sendNodemailerEmail({ to: recipient, subject: `[Radha Agency Team OS] ${subject}`, htmlContent: htmlContent });
-    console.log(`🚀 [Gmail Email Sent Successfully] MessageID: ${info.messageId}`);
-    return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error('❌ [Gmail Nodemailer Error]:', error.message);
-    return { success: false, error: error.message };
-  }
+  return sendUniversalEmail({ to: recipient, subject: subject || `Notification: ${title}`, htmlContent });
 }
 
 /**
- * Send Client Project Acceptance Package Portal Email
+ * Send Client Project Acceptance Package Email
  */
 export async function sendClientProjectPortalEmail({ to, clientName, projectTitle, portalUrl, clientLoginUrl, clientPassword, advancePercent, advanceAmount }) {
   const recipient = to || 'client@example.com';
-  const loginUrl = clientLoginUrl || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/client-login`;
-  const percentText = advancePercent ? `${advancePercent}%` : '50%';
-
   const htmlContent = `
     <!DOCTYPE html>
     <html>
-    <head>
-      <meta charset="utf-8">
-      <style>
-        body { font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif; background-color: #1A1C11; color: #f1ece2; margin: 0; padding: 24px; }
-        .container { max-width: 600px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
-        .brand { font-size: 22px; font-weight: 900; letter-spacing: 2px; color: #b7e44c; text-transform: uppercase; margin-bottom: 24px; border-b: 1px solid rgba(255,255,255,0.1); padding-bottom: 16px; }
-        .title { font-size: 24px; font-weight: 700; color: #ffffff; margin-bottom: 16px; }
-        .message { font-size: 14px; line-height: 1.6; color: #d1cfc7; margin-bottom: 24px; }
-        .details-box { background-color: #1A1C11; border: 1px solid rgba(183, 228, 76, 0.3); padding: 20px; border-radius: 12px; margin-bottom: 24px; font-size: 13px; color: #e1dfd7; }
-        .cred-box { background-color: #24271B; border: 1px border-dashed #b7e44c; padding: 14px; border-radius: 10px; margin-top: 12px; }
-        .btn { display: inline-block; background-color: #b7e44c; color: #111111; font-weight: 800; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; padding: 14px 28px; border-radius: 12px; text-decoration: none; box-shadow: 0 10px 20px rgba(183,228,76,0.2); }
-        .footer { margin-top: 32px; font-size: 11px; color: #888680; border-t: 1px solid rgba(255,255,255,0.1); pt: 16px; text-align: center; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="brand">RADHA AGENCY • CLIENT ACCEPTANCE PACKAGE</div>
-        <div class="title">Welcome, ${clientName}!</div>
-        <div class="message">
-          Your project proposal and service agreement package for <strong>"${projectTitle}"</strong> is ready for review and project confirmation.
+    <head><meta charset="utf-8"></head>
+    <body style="font-family: 'Space Grotesk', system-ui, sans-serif; background-color: #1A1C11; color: #f1ece2; padding: 24px;">
+      <div style="max-width: 600px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px;">
+        <div style="font-size: 20px; font-weight: 900; color: #b7e44c; margin-bottom: 20px;">RADHA AGENCY • PROJECT ACCEPTANCE</div>
+        <div style="font-size: 24px; font-weight: 700; color: #fff; margin-bottom: 12px;">Official Project Scope & Agreement</div>
+        <p style="font-size: 14px; color: #d1cfc7; line-height: 1.6;">Dear <strong>${clientName}</strong>, your project package for <strong>"${projectTitle}"</strong> is ready for review.</p>
+        <div style="background-color: #1A1C11; border-radius: 12px; padding: 20px; margin: 20px 0;">
+          <div style="font-size: 11px; text-transform: uppercase; color: #888680; font-weight: 700;">Client Login ID</div>
+          <div style="font-size: 14px; color: #fff; font-family: monospace;">${recipient}</div>
+          <div style="font-size: 11px; text-transform: uppercase; color: #888680; font-weight: 700; margin-top: 12px;">Access Password</div>
+          <div style="font-size: 14px; color: #b7e44c; font-family: monospace; font-weight: 700;">${clientPassword || 'Contact Radha Agency'}</div>
+          ${advanceAmount ? `<div style="font-size: 11px; text-transform: uppercase; color: #888680; font-weight: 700; margin-top: 12px;">Required Advance (${advancePercent || 50}%)</div><div style="font-size: 18px; color: #b7e44c; font-family: monospace; font-weight: 900;">₹${Number(advanceAmount).toLocaleString('en-IN')}</div>` : ''}
         </div>
-        <div class="details-box">
-          <p style="margin: 0 0 8px 0;"><strong>📁 Project Deliverable:</strong> ${projectTitle}</p>
-          <p style="margin: 0 0 8px 0;"><strong>💰 Advance Required (${percentText}):</strong> ₹${advanceAmount?.toLocaleString('en-IN') || '12,500'}</p>
-
-          <div class="cred-box">
-            <p style="margin: 0 0 6px 0; color: #b7e44c; font-weight: bold;">🔑 YOUR CLIENT PORTAL LOGIN CREDENTIALS:</p>
-            <p style="margin: 0 0 4px 0;">• <strong>Client Login ID:</strong> <code>${recipient}</code></p>
-            <p style="margin: 0 0 4px 0;">• <strong>Access Password:</strong> <span style="background: #b7e44c; color: #111; font-weight: bold; padding: 2px 8px; border-radius: 4px;">${clientPassword}</span></p>
-            <p style="margin: 0;">• <strong>Client Login Portal Link:</strong> <a href="${loginUrl}" style="color: #b7e44c;">${loginUrl}</a></p>
-          </div>
-
-          <p style="margin: 12px 0 0 0;"><strong> Workflow:</strong> Review Proposal → Sign Agreement → Pay Advance via Bank/UPI QR → Track Live Project Progress & Financial Balance</p>
-        </div>
-
-        <div style="text-align: center; margin: 32px 0;">
-          <a href="${portalUrl}" class="btn">View Proposal & Accept Project →</a>
-        </div>
-        <div class="footer">
-          © ${new Date().getFullYear()} RADHA AGENCY DIGITAL MEDIA. Official Client Portal.
-        </div>
+        <div style="text-align: center;"><a href="${portalUrl || clientLoginUrl}" style="background-color: #b7e44c; color: #111; font-weight: 800; font-size: 13px; text-transform: uppercase; padding: 14px 28px; border-radius: 9999px; text-decoration: none;">Review Proposal & Pay Advance →</a></div>
+        <div style="margin-top: 32px; font-size: 11px; color: #888680; text-align: center;">© ${new Date().getFullYear()} RADHA AGENCY DIGITAL MEDIA.</div>
       </div>
     </body>
     </html>
   `;
-
-  try {
-    const info = await sendNodemailerEmail({ to: recipient, subject: `📁 Proposal Package & Client Login: ${projectTitle} - Radha Agency`, htmlContent: htmlContent });
-    console.log(`🚀 [Client Portal Email Sent] To: ${recipient} | MessageID: ${info.messageId}`);
-    return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error(`❌ [Nodemailer Client Portal Error]:`, error.message);
-    return { success: false, error: error.message };
-  }
+  return sendUniversalEmail({ to: recipient, subject: `📋 Project Acceptance Package: "${projectTitle}" - Radha Agency`, htmlContent });
 }
 
 /**
- * Send Payment Confirmation & Signed Documents Package Email
+ * Send Payment Confirmation Receipt Email
  */
 export async function sendPaymentApprovalConfirmationEmail({ to, clientName, projectTitle, utrNumber, advanceAmount, remainingAmount }) {
   const recipient = to || 'client@example.com';
-
   const htmlContent = `
     <!DOCTYPE html>
     <html>
-    <head>
-      <meta charset="utf-8">
-      <style>
-        body { font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif; background-color: #1A1C11; color: #f1ece2; margin: 0; padding: 24px; }
-        .container { max-width: 600px; margin: 0 auto; background-color: #24271B; border: 2px solid #10b981; border-radius: 20px; padding: 32px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
-        .brand { font-size: 20px; font-weight: 800; letter-spacing: 2px; color: #10b981; text-transform: uppercase; margin-bottom: 24px; border-b: 1px solid rgba(255,255,255,0.1); padding-bottom: 16px; }
-        .title { font-size: 24px; font-weight: 700; color: #ffffff; margin-bottom: 16px; }
-        .message { font-size: 14px; line-height: 1.6; color: #d1cfc7; margin-bottom: 24px; }
-        .details-box { background-color: #1A1C11; border-left: 4px solid #10b981; padding: 20px; border-radius: 8px; margin-bottom: 24px; font-size: 13px; color: #e1dfd7; }
-        .status-badge { display: inline-block; background-color: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); padding: 4px 12px; border-radius: 9999px; font-weight: bold; font-size: 12px; }
-        .footer { margin-top: 32px; font-size: 11px; color: #888680; border-t: 1px solid rgba(255,255,255,0.1); pt: 16px; text-align: center; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="brand">🎉 RADHA AGENCY • PROJECT CONFIRMED</div>
-        <div class="title">Advance Payment Received & Project Started!</div>
-        <div class="message">
-          Dear <strong>${clientName}</strong>,<br><br>
-          We are pleased to inform you that your advance payment of <strong>₹${advanceAmount?.toLocaleString('en-IN')}</strong> (UTR: <code>${utrNumber}</code>) for <strong>"${projectTitle}"</strong> has been verified and approved by Radha Agency Finance.
+    <head><meta charset="utf-8"></head>
+    <body style="font-family: 'Space Grotesk', system-ui, sans-serif; background-color: #1A1C11; color: #f1ece2; padding: 24px;">
+      <div style="max-width: 580px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px;">
+        <div style="font-size: 20px; font-weight: 900; color: #b7e44c; margin-bottom: 20px;">RADHA AGENCY • PAYMENT CONFIRMED</div>
+        <div style="font-size: 24px; font-weight: 700; color: #fff; margin-bottom: 12px;">✅ Advance Payment Received</div>
+        <p style="font-size: 14px; color: #d1cfc7; line-height: 1.6;">Hello <strong>${clientName}</strong>, your advance payment for <strong>"${projectTitle}"</strong> has been approved by Finance. Project work has officially begun!</p>
+        <div style="background-color: #1A1C11; border-radius: 12px; padding: 20px; margin: 20px 0;">
+          <div style="display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0;"><span>Amount Received:</span><strong style="color: #b7e44c; font-family: monospace;">₹${Number(advanceAmount).toLocaleString('en-IN')}</strong></div>
+          <div style="display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0;"><span>Transaction UTR:</span><strong style="color: #fff; font-family: monospace;">${utrNumber || 'Verified'}</strong></div>
+          <div style="display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0;"><span>Remaining Balance:</span><strong style="color: #fff; font-family: monospace;">₹${Number(remainingAmount || 0).toLocaleString('en-IN')}</strong></div>
         </div>
-        <div class="details-box">
-          <p style="margin: 0 0 8px 0;"><span class="status-badge">✅ PROJECT STATUS: CONFIRMED & IN PROGRESS</span></p>
-          <p style="margin: 0 0 8px 0;"><strong>📁 Project Deliverable:</strong> ${projectTitle}</p>
-          <p style="margin: 0 0 8px 0;"><strong>💵 Advance Received:</strong> ₹${advanceAmount?.toLocaleString('en-IN')}</p>
-          <p style="margin: 0 0 8px 0;"><strong>💳 Remaining Balance:</strong> ₹${remainingAmount?.toLocaleString('en-IN')} (Due upon final delivery)</p>
-          <p style="margin: 0;"><strong>🧾 Attached Documents:</strong> Approved Proposal, Signed Contract Agreement & Payment Receipt Voucher.</p>
-        </div>
-        <div class="footer">
-          © ${new Date().getFullYear()} RADHA AGENCY. Production & Development Team.
-        </div>
+        <div style="margin-top: 32px; font-size: 11px; color: #888680; text-align: center;">© ${new Date().getFullYear()} RADHA AGENCY FINANCE DEPARTMENT.</div>
       </div>
     </body>
     </html>
   `;
-
-  try {
-    const info = await sendNodemailerEmail({ to: recipient, subject: `🎉 Project Confirmed: ${projectTitle} - Advance Payment Received & Signed Contract`, htmlContent: htmlContent });
-    console.log(`🚀 [Payment Approval Email Sent] To: ${recipient} | MessageID: ${info.messageId}`);
-    return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error(`❌ [Nodemailer Payment Approval Error]:`, error.message);
-    return { success: false, error: error.message };
-  }
+  return sendUniversalEmail({ to: recipient, subject: `✅ Payment Confirmed: "${projectTitle}" (₹${Number(advanceAmount).toLocaleString('en-IN')})`, htmlContent });
 }
-
 
 /**
  * Send 6-Digit Email OTP for Agent Signup Verification
@@ -257,55 +225,25 @@ export async function sendPaymentApprovalConfirmationEmail({ to, clientName, pro
 export async function sendAgentSignupOtpEmail({ to, agentName, otp }) {
   const recipient = to || 'agent@example.com';
   const name = agentName || 'Partner Agent';
-
   const htmlContent = `
     <!DOCTYPE html>
     <html>
-    <head>
-      <meta charset="utf-8">
-      <style>
-        body { font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif; background-color: #1A1C11; color: #f1ece2; margin: 0; padding: 24px; }
-        .container { max-width: 580px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
-        .brand { font-size: 20px; font-weight: 900; letter-spacing: 2px; color: #b7e44c; text-transform: uppercase; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 14px; }
-        .title { font-size: 22px; font-weight: 700; color: #ffffff; margin-bottom: 12px; }
-        .message { font-size: 14px; line-height: 1.6; color: #d1cfc7; margin-bottom: 24px; }
-        .otp-box { background-color: #1A1C11; border: 2px dashed #b7e44c; border-radius: 12px; padding: 20px; text-align: center; margin: 24px 0; }
-        .otp-code { font-size: 38px; font-weight: 900; letter-spacing: 10px; color: #b7e44c; font-family: monospace; }
-        .expiry { font-size: 12px; color: #ff8a3d; margin-top: 8px; font-weight: 600; }
-        .footer { margin-top: 32px; font-size: 11px; color: #888680; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px; text-align: center; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="brand">RADHA AGENCY • PARTNER AFFILIATE PORTAL</div>
-        <div class="title">🔐 Verify Your Agent Email</div>
-        <div class="message">
-          Hello <strong>${name}</strong>,<br/><br/>
-          Thank you for joining the <strong>Radha Agency Partner & Affiliate Program</strong>. Please use the 6-digit verification code below to verify your email and activate your Agent account.
+    <head><meta charset="utf-8"></head>
+    <body style="font-family: 'Space Grotesk', system-ui, sans-serif; background-color: #1A1C11; color: #f1ece2; padding: 24px;">
+      <div style="max-width: 580px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px;">
+        <div style="font-size: 20px; font-weight: 900; color: #b7e44c; margin-bottom: 20px;">RADHA AGENCY • PARTNER AFFILIATE</div>
+        <div style="font-size: 22px; font-weight: 700; color: #fff; margin-bottom: 12px;">🔐 Verify Your Agent Email</div>
+        <p style="font-size: 14px; color: #d1cfc7; line-height: 1.6;">Hello <strong>${name}</strong>,<br/>Thank you for joining the Radha Agency Partner Program. Use the 6-digit verification code below to verify your email and activate your account.</p>
+        <div style="background-color: #1A1C11; border: 2px dashed #b7e44c; border-radius: 12px; padding: 20px; text-align: center; margin: 24px 0;">
+          <div style="font-size: 38px; font-weight: 900; letter-spacing: 10px; color: #b7e44c; font-family: monospace;">${otp}</div>
+          <div style="font-size: 12px; color: #ff8a3d; margin-top: 8px; font-weight: 600;">⚠️ Code expires in 15 minutes.</div>
         </div>
-        <div class="otp-box">
-          <div class="otp-code">${otp}</div>
-          <div class="expiry">⚠️ This code expires in 5 minutes. Do not share with anyone.</div>
-        </div>
-        <div class="message" style="font-size: 12px; color: #a19f96;">
-          If you did not request this verification, please ignore this email.
-        </div>
-        <div class="footer">
-          © ${new Date().getFullYear()} RADHA AGENCY. Official Partner & Commission System.
-        </div>
+        <div style="margin-top: 32px; font-size: 11px; color: #888680; text-align: center;">© ${new Date().getFullYear()} RADHA AGENCY PARTNER PROGRAM.</div>
       </div>
     </body>
     </html>
   `;
-
-  try {
-    const info = await sendNodemailerEmail({ to: recipient, subject: `[${otp}] Radha Agency Agent Verification Code`, htmlContent: htmlContent });
-    console.log(`🚀 [Agent OTP Sent] To: ${recipient} | MsgID: ${info.messageId}`);
-    return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error('❌ [Agent OTP Email Error]:', error.message);
-    return { success: false, error: error.message };
-  }
+  return sendUniversalEmail({ to: recipient, subject: `[${otp}] Radha Agency Agent Verification Code`, htmlContent });
 }
 
 /**
@@ -314,105 +252,55 @@ export async function sendAgentSignupOtpEmail({ to, agentName, otp }) {
 export async function sendAgentWelcomeEmail({ to, agentName, referralCode, loginUrl }) {
   const recipient = to || 'agent@example.com';
   const portalUrl = loginUrl || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/agent/login`;
-
   const htmlContent = `
     <!DOCTYPE html>
     <html>
-    <head>
-      <meta charset="utf-8">
-      <style>
-        body { font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif; background-color: #1A1C11; color: #f1ece2; margin: 0; padding: 24px; }
-        .container { max-width: 580px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
-        .brand { font-size: 20px; font-weight: 900; letter-spacing: 2px; color: #b7e44c; text-transform: uppercase; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 14px; }
-        .title { font-size: 24px; font-weight: 700; color: #ffffff; margin-bottom: 12px; }
-        .card { background-color: #1A1C11; border: 1px solid rgba(183, 228, 76, 0.3); border-radius: 12px; padding: 20px; margin: 20px 0; }
-        .code-box { font-size: 24px; font-weight: 800; color: #b7e44c; font-family: monospace; letter-spacing: 2px; }
-        .btn { display: inline-block; background-color: #b7e44c; color: #111111; font-weight: 800; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; padding: 14px 28px; border-radius: 9999px; text-decoration: none; margin-top: 16px; }
-        .footer { margin-top: 32px; font-size: 11px; color: #888680; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px; text-align: center; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="brand">RADHA AGENCY • PARTNER AFFILIATE</div>
-        <div class="title">🎉 Welcome to Radha Agency Partner Network, ${agentName}!</div>
-        <p style="font-size: 14px; color: #d1cfc7; line-height: 1.6;">
-          Your Agent account is active and verified. You are now eligible to earn <strong>10% commission</strong> on every client project closed through your referral!
-        </p>
-        <div class="card">
-          <div style="font-size: 11px; text-transform: uppercase; color: #888680; font-weight: 700; margin-bottom: 6px;">Your Unique Referral Code</div>
-          <div class="code-box">${referralCode}</div>
-          <div style="font-size: 12px; color: #a19f96; margin-top: 8px;">Share your link or submit client leads directly from your dashboard to earn commissions.</div>
+    <head><meta charset="utf-8"></head>
+    <body style="font-family: 'Space Grotesk', system-ui, sans-serif; background-color: #1A1C11; color: #f1ece2; padding: 24px;">
+      <div style="max-width: 580px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px;">
+        <div style="font-size: 20px; font-weight: 900; color: #b7e44c; margin-bottom: 20px;">RADHA AGENCY • PARTNER AFFILIATE</div>
+        <div style="font-size: 24px; font-weight: 700; color: #fff; margin-bottom: 12px;">🎉 Welcome to Partner Network, ${agentName}!</div>
+        <p style="font-size: 14px; color: #d1cfc7; line-height: 1.6;">Your Agent account is active and verified. Share your referral code or link with prospective clients to earn generous deal commissions!</p>
+        <div style="background-color: #1A1C11; border: 1px solid rgba(183, 228, 76, 0.3); border-radius: 12px; padding: 20px; margin: 20px 0;">
+          <div style="font-size: 11px; text-transform: uppercase; color: #888680; font-weight: 700;">Your Unique Referral Code</div>
+          <div style="font-size: 24px; font-weight: 800; color: #b7e44c; font-family: monospace;">${referralCode}</div>
         </div>
-        <div style="text-align: center;">
-          <a href="${portalUrl}" class="btn">Go to Agent Dashboard →</a>
-        </div>
-        <div class="footer">
-          © ${new Date().getFullYear()} RADHA AGENCY DIGITAL MEDIA.
-        </div>
+        <div style="text-align: center;"><a href="${portalUrl}" style="background-color: #b7e44c; color: #111; font-weight: 800; font-size: 13px; text-transform: uppercase; padding: 14px 28px; border-radius: 9999px; text-decoration: none;">Go to Agent Dashboard →</a></div>
+        <div style="margin-top: 32px; font-size: 11px; color: #888680; text-align: center;">© ${new Date().getFullYear()} RADHA AGENCY DIGITAL MEDIA.</div>
       </div>
     </body>
     </html>
   `;
-
-  try {
-    await sendNodemailerEmail({ to: recipient, subject: `🎉 Welcome to Radha Agency Partner Network! (Ref: ${referralCode})`, htmlContent: htmlContent });
-  } catch (err) {
-    console.error('❌ [Welcome Email Error]:', err.message);
-  }
+  return sendUniversalEmail({ to: recipient, subject: `🎉 Welcome to Radha Agency Partner Network! (Ref: ${referralCode})`, htmlContent });
 }
 
 /**
- * Send Notification when Commission is Unlocked & Credited to Agent Wallet
+ * Send Notification when Commission is Unlocked & Credited
  */
 export async function sendAgentCommissionCreditedEmail({ to, agentName, projectTitle, commissionAmount, newWalletBalance }) {
   const recipient = to || 'agent@example.com';
   const dashboardUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/agent/dashboard`;
-
   const htmlContent = `
     <!DOCTYPE html>
     <html>
-    <head>
-      <meta charset="utf-8">
-      <style>
-        body { font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif; background-color: #1A1C11; color: #f1ece2; margin: 0; padding: 24px; }
-        .container { max-width: 580px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
-        .brand { font-size: 20px; font-weight: 900; letter-spacing: 2px; color: #b7e44c; text-transform: uppercase; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 14px; }
-        .title { font-size: 24px; font-weight: 700; color: #ffffff; margin-bottom: 12px; }
-        .wallet-card { background: linear-gradient(135deg, rgba(183, 228, 76, 0.15), rgba(36, 39, 27, 0.9)); border: 1px solid #b7e44c; border-radius: 16px; padding: 24px; margin: 20px 0; text-align: center; }
-        .amount { font-size: 36px; font-weight: 900; color: #b7e44c; font-family: monospace; }
-        .btn { display: inline-block; background-color: #b7e44c; color: #111111; font-weight: 800; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; padding: 14px 28px; border-radius: 9999px; text-decoration: none; margin-top: 16px; }
-        .footer { margin-top: 32px; font-size: 11px; color: #888680; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px; text-align: center; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="brand">RADHA AGENCY • COMMISSION EARNED</div>
-        <div class="title">💰 ₹${commissionAmount?.toLocaleString('en-IN')} Credited to Your Wallet!</div>
-        <p style="font-size: 14px; color: #d1cfc7; line-height: 1.6;">
-          Congratulations <strong>${agentName}</strong>!<br/>
-          Your referred client for <strong>"${projectTitle}"</strong> has confirmed the project and completed advance payment. Your commission is now unlocked and available in your wallet!
-        </p>
-        <div class="wallet-card">
-          <div style="font-size: 12px; text-transform: uppercase; color: #d1cfc7; font-weight: 700; letter-spacing: 1px; margin-bottom: 8px;">Commission Credited</div>
-          <div class="amount">+ ₹${commissionAmount?.toLocaleString('en-IN')}</div>
-          <div style="font-size: 13px; color: #ffffff; margin-top: 10px;">Available Wallet Balance: <strong>₹${newWalletBalance?.toLocaleString('en-IN')}</strong></div>
+    <head><meta charset="utf-8"></head>
+    <body style="font-family: 'Space Grotesk', system-ui, sans-serif; background-color: #1A1C11; color: #f1ece2; padding: 24px;">
+      <div style="max-width: 580px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px;">
+        <div style="font-size: 20px; font-weight: 900; color: #b7e44c; margin-bottom: 20px;">RADHA AGENCY • COMMISSION EARNED</div>
+        <div style="font-size: 24px; font-weight: 700; color: #fff; margin-bottom: 12px;">💰 ₹${commissionAmount?.toLocaleString('en-IN')} Credited to Your Wallet!</div>
+        <p style="font-size: 14px; color: #d1cfc7; line-height: 1.6;">Congratulations <strong>${agentName}</strong>! Your referred client for <strong>"${projectTitle}"</strong> has completed advance payment. Your commission is now unlocked!</p>
+        <div style="background: linear-gradient(135deg, rgba(183, 228, 76, 0.15), rgba(36, 39, 27, 0.9)); border: 1px solid #b7e44c; border-radius: 16px; padding: 24px; margin: 20px 0; text-align: center;">
+          <div style="font-size: 12px; text-transform: uppercase; color: #d1cfc7; font-weight: 700;">Commission Credited</div>
+          <div style="font-size: 36px; font-weight: 900; color: #b7e44c; font-family: monospace;">+ ₹${commissionAmount?.toLocaleString('en-IN')}</div>
+          <div style="font-size: 13px; color: #fff; margin-top: 10px;">Available Wallet: <strong>₹${newWalletBalance?.toLocaleString('en-IN')}</strong></div>
         </div>
-        <div style="text-align: center;">
-          <a href="${dashboardUrl}" class="btn">View Wallet & Request Payout →</a>
-        </div>
-        <div class="footer">
-          © ${new Date().getFullYear()} RADHA AGENCY. Official Partner System.
-        </div>
+        <div style="text-align: center;"><a href="${dashboardUrl}" style="background-color: #b7e44c; color: #111; font-weight: 800; font-size: 13px; text-transform: uppercase; padding: 14px 28px; border-radius: 9999px; text-decoration: none;">View Wallet & Request Payout →</a></div>
+        <div style="margin-top: 32px; font-size: 11px; color: #888680; text-align: center;">© ${new Date().getFullYear()} RADHA AGENCY FINANCE DEPARTMENT.</div>
       </div>
     </body>
     </html>
   `;
-
-  try {
-    await sendNodemailerEmail({ to: recipient, subject: `💰 Commission Unlocked: ₹${commissionAmount?.toLocaleString('en-IN')} credited for "${projectTitle}"`, htmlContent: htmlContent });
-  } catch (err) {
-    console.error('❌ [Commission Email Error]:', err.message);
-  }
+  return sendUniversalEmail({ to: recipient, subject: `💰 Commission Unlocked: ₹${commissionAmount?.toLocaleString('en-IN')} for "${projectTitle}"`, htmlContent });
 }
 
 /**
@@ -421,152 +309,58 @@ export async function sendAgentCommissionCreditedEmail({ to, agentName, projectT
 export async function sendAgentWithdrawalApprovedEmail({ to, agentName, amount, payoutMethod, utrNumber, remainingBalance }) {
   const recipient = to || 'agent@example.com';
   const dashboardUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/agent/dashboard`;
-
   const htmlContent = `
     <!DOCTYPE html>
     <html>
-    <head>
-      <meta charset="utf-8">
-      <style>
-        body { font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif; background-color: #1A1C11; color: #f1ece2; margin: 0; padding: 24px; }
-        .container { max-width: 580px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
-        .brand { font-size: 20px; font-weight: 900; letter-spacing: 2px; color: #b7e44c; text-transform: uppercase; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 14px; }
-        .title { font-size: 24px; font-weight: 700; color: #ffffff; margin-bottom: 12px; }
-        .badge-paid { display: inline-block; background-color: rgba(183, 228, 76, 0.2); color: #b7e44c; border: 1px solid #b7e44c; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; padding: 6px 14px; border-radius: 9999px; margin-bottom: 16px; }
-        .details-card { background-color: #1A1C11; border: 1px solid rgba(255,255,255,0.1); border-radius: 14px; padding: 20px; margin: 20px 0; }
-        .row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 13px; }
-        .row:last-child { border-bottom: none; }
-        .amount-hero { font-size: 36px; font-weight: 900; color: #b7e44c; font-family: monospace; text-align: center; margin: 10px 0; }
-        .btn { display: inline-block; background-color: #b7e44c; color: #111111; font-weight: 800; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; padding: 14px 28px; border-radius: 9999px; text-decoration: none; margin-top: 16px; }
-        .footer { margin-top: 32px; font-size: 11px; color: #888680; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px; text-align: center; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="brand">RADHA AGENCY • PAYOUT SUCCESS</div>
-        <div class="badge-paid">✓ Payout Completed & Transferred</div>
-        <div class="title">Payout Transferred: ₹${amount?.toLocaleString('en-IN')}</div>
-        <p style="font-size: 14px; color: #d1cfc7; line-height: 1.6;">
-          Hello <strong>${agentName}</strong>,<br/>
-          Your commission withdrawal request has been approved by Radha Agency Finance and funds have been transferred successfully.
-        </p>
-
-        <div class="details-card">
-          <div class="amount-hero">₹${amount?.toLocaleString('en-IN')}</div>
-          <div class="row">
-            <span style="color: #888680;">Payout Method:</span>
-            <strong style="color: #ffffff;">${payoutMethod || 'Bank / UPI Transfer'}</strong>
-          </div>
-          <div class="row">
-            <span style="color: #888680;">Bank / UPI UTR / Ref No:</span>
-            <strong style="color: #b7e44c; font-family: monospace;">${utrNumber || 'N/A'}</strong>
-          </div>
-          <div class="row">
-            <span style="color: #888680;">Processed Time:</span>
-            <span style="color: #ffffff;">${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</span>
-          </div>
-          <div class="row">
-            <span style="color: #888680;">Remaining Wallet Balance:</span>
-            <strong style="color: #ffffff;">₹${remainingBalance?.toLocaleString('en-IN')}</strong>
-          </div>
+    <head><meta charset="utf-8"></head>
+    <body style="font-family: 'Space Grotesk', system-ui, sans-serif; background-color: #1A1C11; color: #f1ece2; padding: 24px;">
+      <div style="max-width: 580px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px;">
+        <div style="font-size: 20px; font-weight: 900; color: #b7e44c; margin-bottom: 20px;">RADHA AGENCY • PAYOUT SUCCESS</div>
+        <div style="font-size: 24px; font-weight: 700; color: #fff; margin-bottom: 12px;">Payout Transferred: ₹${amount?.toLocaleString('en-IN')}</div>
+        <p style="font-size: 14px; color: #d1cfc7; line-height: 1.6;">Hello <strong>${agentName}</strong>, your commission withdrawal has been approved and transferred successfully.</p>
+        <div style="background-color: #1A1C11; border-radius: 14px; padding: 20px; margin: 20px 0;">
+          <div style="font-size: 36px; font-weight: 900; color: #b7e44c; font-family: monospace; text-align: center; margin: 10px 0;">₹${amount?.toLocaleString('en-IN')}</div>
+          <div style="display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px;"><span>Payout Method:</span><strong style="color: #fff;">${payoutMethod || 'Bank / UPI Transfer'}</strong></div>
+          <div style="display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px;"><span>Bank / UPI UTR:</span><strong style="color: #b7e44c; font-family: monospace;">${utrNumber || 'N/A'}</strong></div>
+          <div style="display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px;"><span>Remaining Wallet:</span><strong style="color: #fff;">₹${remainingBalance?.toLocaleString('en-IN')}</strong></div>
         </div>
-
-        <div style="text-align: center;">
-          <a href="${dashboardUrl}" class="btn">View Agent Dashboard & Slip →</a>
-        </div>
-        <div class="footer">
-          © ${new Date().getFullYear()} RADHA AGENCY FINANCE DEPARTMENT.
-        </div>
+        <div style="text-align: center;"><a href="${dashboardUrl}" style="background-color: #b7e44c; color: #111; font-weight: 800; font-size: 13px; text-transform: uppercase; padding: 14px 28px; border-radius: 9999px; text-decoration: none;">View Dashboard Slip →</a></div>
+        <div style="margin-top: 32px; font-size: 11px; color: #888680; text-align: center;">© ${new Date().getFullYear()} RADHA AGENCY FINANCE DEPARTMENT.</div>
       </div>
     </body>
     </html>
   `;
-
-  try {
-    await sendNodemailerEmail({ to: recipient, subject: `✅ Payout Completed: ₹${amount?.toLocaleString('en-IN')} Transferred (UTR: ${utrNumber})`, htmlContent: htmlContent });
-    console.log(`🚀 [Withdrawal Approved Email Sent] To: ${recipient} | UTR: ${utrNumber}`);
-  } catch (err) {
-    console.error('❌ [Withdrawal Approved Email Error]:', err.message);
-  }
+  return sendUniversalEmail({ to: recipient, subject: `✅ Payout Completed: ₹${amount?.toLocaleString('en-IN')} Transferred (UTR: ${utrNumber})`, htmlContent });
 }
 
 /**
- * Send Notification when Agent Withdrawal is REJECTED & REFUNDED to Wallet
+ * Send Notification when Agent Withdrawal is REJECTED & REFUNDED
  */
 export async function sendAgentWithdrawalRejectedEmail({ to, agentName, amount, reason, newWalletBalance }) {
   const recipient = to || 'agent@example.com';
   const dashboardUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/agent/dashboard`;
-
   const htmlContent = `
     <!DOCTYPE html>
     <html>
-    <head>
-      <meta charset="utf-8">
-      <style>
-        body { font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif; background-color: #1A1C11; color: #f1ece2; margin: 0; padding: 24px; }
-        .container { max-width: 580px; margin: 0 auto; background-color: #24271B; border: 2px solid #ef4444; border-radius: 20px; padding: 32px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
-        .brand { font-size: 20px; font-weight: 900; letter-spacing: 2px; color: #ef4444; text-transform: uppercase; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 14px; }
-        .title { font-size: 24px; font-weight: 700; color: #ffffff; margin-bottom: 12px; }
-        .badge-refunded { display: inline-block; background-color: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid #ef4444; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; padding: 6px 14px; border-radius: 9999px; margin-bottom: 16px; }
-        .details-card { background-color: #1A1C11; border: 1px solid rgba(255,255,255,0.1); border-radius: 14px; padding: 20px; margin: 20px 0; }
-        .reason-box { background-color: rgba(239, 68, 68, 0.1); border-left: 4px solid #ef4444; padding: 14px; border-radius: 8px; margin: 16px 0; font-size: 13px; color: #fca5a5; }
-        .row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 13px; }
-        .row:last-child { border-bottom: none; }
-        .btn { display: inline-block; background-color: #b7e44c; color: #111111; font-weight: 800; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; padding: 14px 28px; border-radius: 9999px; text-decoration: none; margin-top: 16px; }
-        .footer { margin-top: 32px; font-size: 11px; color: #888680; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px; text-align: center; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="brand">RADHA AGENCY • PAYOUT UPDATE</div>
-        <div class="badge-refunded">⚠️ Request Declined & Refunded to Wallet</div>
-        <div class="title">Withdrawal Request Update (₹${amount?.toLocaleString('en-IN')})</div>
-        <p style="font-size: 14px; color: #d1cfc7; line-height: 1.6;">
-          Hello <strong>${agentName}</strong>,<br/>
-          Your withdrawal request of <strong>₹${amount?.toLocaleString('en-IN')}</strong> could not be processed and has been declined by Radha Agency Finance.
-        </p>
-
-        <div class="reason-box">
-          <strong>Reason Provided by Finance:</strong><br/>
-          ${reason || 'Bank details/UPI mismatch. Please verify your payout information in dashboard.'}
+    <head><meta charset="utf-8"></head>
+    <body style="font-family: 'Space Grotesk', system-ui, sans-serif; background-color: #1A1C11; color: #f1ece2; padding: 24px;">
+      <div style="max-width: 580px; margin: 0 auto; background-color: #24271B; border: 2px solid #ef4444; border-radius: 20px; padding: 32px;">
+        <div style="font-size: 20px; font-weight: 900; color: #ef4444; margin-bottom: 20px;">RADHA AGENCY • PAYOUT UPDATE</div>
+        <div style="font-size: 24px; font-weight: 700; color: #fff; margin-bottom: 12px;">Withdrawal Request Update (₹${amount?.toLocaleString('en-IN')})</div>
+        <div style="background-color: rgba(239, 68, 68, 0.1); border-left: 4px solid #ef4444; padding: 14px; border-radius: 8px; margin: 16px 0; font-size: 13px; color: #fca5a5;">
+          <strong>Reason Provided by Finance:</strong><br/>${reason || 'Invalid account/UPI details. Please verify your payout information in dashboard.'}
         </div>
-
-        <div class="details-card">
-          <div class="row">
-            <span style="color: #888680;">Requested Amount:</span>
-            <strong style="color: #ffffff;">₹${amount?.toLocaleString('en-IN')}</strong>
-          </div>
-          <div class="row">
-            <span style="color: #888680;">Action Taken:</span>
-            <strong style="color: #b7e44c;">100% Refunded Back to Available Wallet</strong>
-          </div>
-          <div class="row">
-            <span style="color: #888680;">Updated Available Wallet Balance:</span>
-            <strong style="color: #b7e44c; font-size: 15px;">₹${newWalletBalance?.toLocaleString('en-IN')}</strong>
-          </div>
+        <div style="background-color: #1A1C11; border-radius: 14px; padding: 20px; margin: 20px 0;">
+          <div style="display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px;"><span>Action Taken:</span><strong style="color: #b7e44c;">100% Refunded to Wallet</strong></div>
+          <div style="display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px;"><span>Updated Wallet Balance:</span><strong style="color: #b7e44c; font-size: 15px;">₹${newWalletBalance?.toLocaleString('en-IN')}</strong></div>
         </div>
-
-        <p style="font-size: 13px; color: #a19f96;">
-          💡 <strong>What should you do?</strong> Please visit your Agent Dashboard, update your Bank Account or UPI ID details under "Payout Settings", and submit a new withdrawal request.
-        </p>
-
-        <div style="text-align: center;">
-          <a href="${dashboardUrl}" class="btn">Update Payout Details & Retry →</a>
-        </div>
-        <div class="footer">
-          © ${new Date().getFullYear()} RADHA AGENCY FINANCE DEPARTMENT.
-        </div>
+        <div style="text-align: center;"><a href="${dashboardUrl}" style="background-color: #b7e44c; color: #111; font-weight: 800; font-size: 13px; text-transform: uppercase; padding: 14px 28px; border-radius: 9999px; text-decoration: none;">Update Payout Details & Retry →</a></div>
+        <div style="margin-top: 32px; font-size: 11px; color: #888680; text-align: center;">© ${new Date().getFullYear()} RADHA AGENCY FINANCE DEPARTMENT.</div>
       </div>
     </body>
     </html>
   `;
-
-  try {
-    await sendNodemailerEmail({ to: recipient, subject: `⚠️ Withdrawal Declined & Refunded to Wallet: ₹${amount?.toLocaleString('en-IN')} [Radha Agency]`, htmlContent: htmlContent });
-    console.log(`🚀 [Withdrawal Rejected Email Sent] To: ${recipient} | Reason: ${reason}`);
-  } catch (err) {
-    console.error('❌ [Withdrawal Rejected Email Error]:', err.message);
-  }
+  return sendUniversalEmail({ to: recipient, subject: `⚠️ Withdrawal Declined & Refunded to Wallet: ₹${amount?.toLocaleString('en-IN')} [Radha Agency]`, htmlContent });
 }
 
 /**
@@ -575,53 +369,23 @@ export async function sendAgentWithdrawalRejectedEmail({ to, agentName, amount, 
 export async function sendPasswordResetOtpEmail({ to, name, otp, userType }) {
   const recipient = to || 'user@example.com';
   const roleTitle = userType === 'AGENT' ? 'Agent Partner Portal' : (userType === 'CLIENT' ? 'Client Project Portal' : 'Internal Team OS');
-
   const htmlContent = `
     <!DOCTYPE html>
     <html>
-    <head>
-      <meta charset="utf-8">
-      <style>
-        body { font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif; background-color: #1A1C11; color: #f1ece2; margin: 0; padding: 24px; }
-        .container { max-width: 540px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
-        .brand { font-size: 20px; font-weight: 900; letter-spacing: 2px; color: #b7e44c; text-transform: uppercase; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 14px; }
-        .title { font-size: 22px; font-weight: 700; color: #ffffff; margin-bottom: 12px; }
-        .message { font-size: 14px; line-height: 1.6; color: #d1cfc7; margin-bottom: 20px; }
-        .otp-box { background-color: #1A1C11; border: 1px solid rgba(183, 228, 76, 0.4); border-radius: 12px; padding: 20px; text-align: center; margin: 24px 0; }
-        .otp-code { font-size: 36px; font-weight: 900; letter-spacing: 8px; color: #b7e44c; font-family: monospace; }
-        .expiry { font-size: 11px; color: #ef4444; margin-top: 8px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
-        .footer { margin-top: 32px; font-size: 11px; color: #888680; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px; text-align: center; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="brand">RADHA AGENCY • PASSWORD RESET</div>
-        <div class="title">🔐 Reset Your Password (${roleTitle})</div>
-        <div class="message">
-          Hello <strong>${name || 'User'}</strong>,<br/><br/>
-          We received a request to reset your password for your <strong>${roleTitle}</strong> account on Radha Agency. Use the 6-digit verification code below to verify your identity and set a new password.
+    <head><meta charset="utf-8"></head>
+    <body style="font-family: 'Space Grotesk', system-ui, sans-serif; background-color: #1A1C11; color: #f1ece2; padding: 24px;">
+      <div style="max-width: 540px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px;">
+        <div style="font-size: 20px; font-weight: 900; color: #b7e44c; margin-bottom: 20px;">RADHA AGENCY • PASSWORD RESET</div>
+        <div style="font-size: 22px; font-weight: 700; color: #fff; margin-bottom: 12px;">🔐 Reset Your Password (${roleTitle})</div>
+        <p style="font-size: 14px; color: #d1cfc7; line-height: 1.6;">Hello <strong>${name || 'User'}</strong>,<br/>Use the 6-digit verification code below to reset your password for your ${roleTitle} account.</p>
+        <div style="background-color: #1A1C11; border: 1px solid rgba(183, 228, 76, 0.4); border-radius: 12px; padding: 20px; text-align: center; margin: 24px 0;">
+          <div style="font-size: 36px; font-weight: 900; letter-spacing: 8px; color: #b7e44c; font-family: monospace;">${otp}</div>
+          <div style="font-size: 11px; color: #ef4444; margin-top: 8px; font-weight: 600;">⚠️ Code expires in 15 minutes.</div>
         </div>
-        <div class="otp-box">
-          <div class="otp-code">${otp}</div>
-          <div class="expiry">⚠️ This code expires in 10 minutes. Do not share with anyone.</div>
-        </div>
-        <div class="message" style="font-size: 12px; color: #a19f96;">
-          If you did not request a password reset, you can safely ignore this email. Your account remains completely secure.
-        </div>
-        <div class="footer">
-          © ${new Date().getFullYear()} RADHA AGENCY DIGITAL MEDIA. Security Department.
-        </div>
+        <div style="margin-top: 32px; font-size: 11px; color: #888680; text-align: center;">© ${new Date().getFullYear()} RADHA AGENCY SECURITY.</div>
       </div>
     </body>
     </html>
   `;
-
-  try {
-    const info = await sendNodemailerEmail({ to: recipient, subject: `[${otp}] Password Reset Verification Code - Radha Agency`, htmlContent: htmlContent });
-    console.log(`🚀 [Password Reset OTP Sent] To: ${recipient} (${userType}) | MsgID: ${info.messageId}`);
-    return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error('❌ [Password Reset OTP Error]:', error.message);
-    return { success: false, error: error.message };
-  }
+  return sendUniversalEmail({ to: recipient, subject: `[${otp}] Password Reset Verification Code - Radha Agency`, htmlContent });
 }

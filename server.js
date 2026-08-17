@@ -1332,14 +1332,14 @@ app.post('/api/agent/send-signup-otp', async (req, res) => {
     const { email, name } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });
 
-    const cleanEmail = email.toLowerCase().trim();
+    const cleanEmail = String(email).toLowerCase().trim();
     const existingAgent = await AgentModel.findOne({ email: cleanEmail });
     if (existingAgent) {
       return res.status(400).json({ error: 'An agent account with this email already exists. Please login.' });
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 mins
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins validity
 
     await AgentOtpModel.findOneAndUpdate(
       { email: cleanEmail },
@@ -1349,19 +1349,19 @@ app.post('/api/agent/send-signup-otp', async (req, res) => {
 
     console.log(`🔑 [AGENT SIGNUP OTP GENERATED] Email: ${cleanEmail} | OTP: ${otp}`);
 
-    const emailRes = await sendAgentSignupOtpEmail({
+    // Dispatch email asynchronously so HTTP request completes in 100ms
+    sendAgentSignupOtpEmail({
       to: cleanEmail,
       agentName: name || 'Partner Agent',
       otp
-    });
-
-    if (!emailRes.success) {
-      console.warn(`⚠️ [SMTP Host Blocked] Cloud host blocked SMTP port. OTP was generated in DB (${otp}). Returning success with verification.`);
-    }
+    }).then(r => {
+      if (r.success) console.log(`✅ [OTP Delivered] To: ${cleanEmail}`);
+      else console.warn(`⚠️ [Email Warning]: ${r.error || 'Check cloud firewall / Brevo key'}`);
+    }).catch(e => console.warn(`⚠️ [Email Error]: ${e.message}`));
 
     res.json({ 
       success: true, 
-      message: 'Verification OTP sent to your email. (Please also check Spam/Junk folder).'
+      message: 'Verification OTP sent to your email. Please check your inbox (and Spam/Junk folder).'
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
