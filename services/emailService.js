@@ -3,63 +3,53 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Create Nodemailer Transporter
+// Create 100% Pure Nodemailer Transporter for Gmail SMTP
 const gmailUser = (process.env.GMAIL_USER || 'radhaagency4@gmail.com').trim();
 const rawPass = process.env.GMAIL_PASS || process.env.GMAIL_APP_PASSWORD || 'jahkhqfynjvbuwqt';
 const gmailPass = rawPass ? rawPass.replace(/\s+/g, '') : '';
-const resendApiKey = process.env.RESEND_API_KEY ? process.env.RESEND_API_KEY.trim() : null;
 
-// Primary SSL Transporter
+// Primary Nodemailer Gmail Transporter
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: parseInt(process.env.SMTP_PORT) || 465,
-  secure: parseInt(process.env.SMTP_PORT) === 587 ? false : true,
-  family: 4, // Force IPv4 to prevent IPv6 drops
+  service: 'gmail',
   auth: {
     user: gmailUser,
     pass: gmailPass,
   },
-  connectionTimeout: 10000,
-  greetingTimeout: 10000,
-  socketTimeout: 15000,
   tls: {
     rejectUnauthorized: false
   }
 });
 
-// Resilient universal send function supporting both HTTPS API (Resend) and SMTP
-async function sendUniversalEmail({ to, subject, htmlContent }) {
+// Fallback Port 587 TLS Transporter
+const fallbackTransporter = nodemailer.createTransport({
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false,
+  requireTLS: true,
+  family: 4,
+  auth: {
+    user: gmailUser,
+    pass: gmailPass,
+  },
+  tls: {
+    rejectUnauthorized: false
+  }
+});
+
+// Verify connection on startup
+transporter.verify((error) => {
+  if (error) {
+    console.warn('⚠️ [Nodemailer Service Warning]:', error.message);
+  } else {
+    console.log('✅ [Nodemailer Gmail Ready]: Connected as', gmailUser);
+  }
+});
+
+// Pure Nodemailer send helper with automatic transport fallback
+async function sendNodemailerEmail({ to, subject, htmlContent }) {
   const recipient = to ? to.trim() : gmailUser;
 
-  // 1. If RESEND_API_KEY is configured, use HTTPS API (Port 443 - NEVER blocked by Render/Cloud firewalls)
-  if (resendApiKey) {
-    try {
-      const resendRes = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${resendApiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          from: `Radha Agency <${process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev'}>`,
-          to: [recipient],
-          subject,
-          html: htmlContent
-        })
-      });
-      const data = await resendRes.json();
-      if (resendRes.ok) {
-        console.log(`🚀 [Resend HTTPS Sent] To: ${recipient} | ID: ${data.id}`);
-        return { success: true, messageId: data.id };
-      } else {
-        console.warn('⚠️ [Resend API Error]:', data);
-      }
-    } catch (apiErr) {
-      console.warn('⚠️ [Resend API Network Error]:', apiErr.message);
-    }
-  }
-
-  // 2. Fallback to direct SMTP
+  // Try Primary Transporter (service: 'gmail')
   try {
     const info = await transporter.sendMail({
       from: `"Radha Agency" <${gmailUser}>`,
@@ -67,11 +57,25 @@ async function sendUniversalEmail({ to, subject, htmlContent }) {
       subject,
       html: htmlContent,
     });
-    console.log(`🚀 [SMTP Sent] To: ${recipient} | MsgID: ${info.messageId}`);
+    console.log(`🚀 [Nodemailer Sent] To: ${recipient} | MsgID: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error(`❌ [Email Dispatch Warning]: ${error.message}`);
-    return { success: false, error: error.message };
+  } catch (err1) {
+    console.warn(`⚠️ [Nodemailer Primary failed, retrying with Port 587 TLS...]: ${err1.message}`);
+    
+    // Fallback Transporter (smtp.gmail.com:587 TLS IPv4)
+    try {
+      const info2 = await fallbackTransporter.sendMail({
+        from: `"Radha Agency" <${gmailUser}>`,
+        to: recipient,
+        subject,
+        html: htmlContent,
+      });
+      console.log(`🚀 [Nodemailer Fallback Sent] To: ${recipient} | MsgID: ${info2.messageId}`);
+      return { success: true, messageId: info2.messageId };
+    } catch (err2) {
+      console.error(`❌ [Nodemailer Error]: ${err2.message}`);
+      return { success: false, error: err2.message };
+    }
   }
 }
 
@@ -115,7 +119,7 @@ export async function sendMemberNotificationEmail({ to, subject, title, message,
   console.log(`[Gmail Nodemailer Dispatching] To: ${recipient} | Subject: "${subject}"`);
 
   try {
-    const info = await sendUniversalEmail({ to: recipient, subject: `[Radha Agency Team OS] ${subject}`, htmlContent: htmlContent });
+    const info = await sendNodemailerEmail({ to: recipient, subject: `[Radha Agency Team OS] ${subject}`, htmlContent: htmlContent });
     console.log(`🚀 [Gmail Email Sent Successfully] MessageID: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
   } catch (error) {
@@ -182,7 +186,7 @@ export async function sendClientProjectPortalEmail({ to, clientName, projectTitl
   `;
 
   try {
-    const info = await sendUniversalEmail({ to: recipient, subject: `📁 Proposal Package & Client Login: ${projectTitle} - Radha Agency`, htmlContent: htmlContent });
+    const info = await sendNodemailerEmail({ to: recipient, subject: `📁 Proposal Package & Client Login: ${projectTitle} - Radha Agency`, htmlContent: htmlContent });
     console.log(`🚀 [Client Portal Email Sent] To: ${recipient} | MessageID: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
   } catch (error) {
@@ -237,7 +241,7 @@ export async function sendPaymentApprovalConfirmationEmail({ to, clientName, pro
   `;
 
   try {
-    const info = await sendUniversalEmail({ to: recipient, subject: `🎉 Project Confirmed: ${projectTitle} - Advance Payment Received & Signed Contract`, htmlContent: htmlContent });
+    const info = await sendNodemailerEmail({ to: recipient, subject: `🎉 Project Confirmed: ${projectTitle} - Advance Payment Received & Signed Contract`, htmlContent: htmlContent });
     console.log(`🚀 [Payment Approval Email Sent] To: ${recipient} | MessageID: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
   } catch (error) {
@@ -295,7 +299,7 @@ export async function sendAgentSignupOtpEmail({ to, agentName, otp }) {
   `;
 
   try {
-    const info = await sendUniversalEmail({ to: recipient, subject: `[${otp}] Radha Agency Agent Verification Code`, htmlContent: htmlContent });
+    const info = await sendNodemailerEmail({ to: recipient, subject: `[${otp}] Radha Agency Agent Verification Code`, htmlContent: htmlContent });
     console.log(`🚀 [Agent OTP Sent] To: ${recipient} | MsgID: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
   } catch (error) {
@@ -351,7 +355,7 @@ export async function sendAgentWelcomeEmail({ to, agentName, referralCode, login
   `;
 
   try {
-    await sendUniversalEmail({ to: recipient, subject: `🎉 Welcome to Radha Agency Partner Network! (Ref: ${referralCode})`, htmlContent: htmlContent });
+    await sendNodemailerEmail({ to: recipient, subject: `🎉 Welcome to Radha Agency Partner Network! (Ref: ${referralCode})`, htmlContent: htmlContent });
   } catch (err) {
     console.error('❌ [Welcome Email Error]:', err.message);
   }
@@ -405,7 +409,7 @@ export async function sendAgentCommissionCreditedEmail({ to, agentName, projectT
   `;
 
   try {
-    await sendUniversalEmail({ to: recipient, subject: `💰 Commission Unlocked: ₹${commissionAmount?.toLocaleString('en-IN')} credited for "${projectTitle}"`, htmlContent: htmlContent });
+    await sendNodemailerEmail({ to: recipient, subject: `💰 Commission Unlocked: ₹${commissionAmount?.toLocaleString('en-IN')} credited for "${projectTitle}"`, htmlContent: htmlContent });
   } catch (err) {
     console.error('❌ [Commission Email Error]:', err.message);
   }
@@ -479,7 +483,7 @@ export async function sendAgentWithdrawalApprovedEmail({ to, agentName, amount, 
   `;
 
   try {
-    await sendUniversalEmail({ to: recipient, subject: `✅ Payout Completed: ₹${amount?.toLocaleString('en-IN')} Transferred (UTR: ${utrNumber})`, htmlContent: htmlContent });
+    await sendNodemailerEmail({ to: recipient, subject: `✅ Payout Completed: ₹${amount?.toLocaleString('en-IN')} Transferred (UTR: ${utrNumber})`, htmlContent: htmlContent });
     console.log(`🚀 [Withdrawal Approved Email Sent] To: ${recipient} | UTR: ${utrNumber}`);
   } catch (err) {
     console.error('❌ [Withdrawal Approved Email Error]:', err.message);
@@ -558,7 +562,7 @@ export async function sendAgentWithdrawalRejectedEmail({ to, agentName, amount, 
   `;
 
   try {
-    await sendUniversalEmail({ to: recipient, subject: `⚠️ Withdrawal Declined & Refunded to Wallet: ₹${amount?.toLocaleString('en-IN')} [Radha Agency]`, htmlContent: htmlContent });
+    await sendNodemailerEmail({ to: recipient, subject: `⚠️ Withdrawal Declined & Refunded to Wallet: ₹${amount?.toLocaleString('en-IN')} [Radha Agency]`, htmlContent: htmlContent });
     console.log(`🚀 [Withdrawal Rejected Email Sent] To: ${recipient} | Reason: ${reason}`);
   } catch (err) {
     console.error('❌ [Withdrawal Rejected Email Error]:', err.message);
@@ -613,7 +617,7 @@ export async function sendPasswordResetOtpEmail({ to, name, otp, userType }) {
   `;
 
   try {
-    const info = await sendUniversalEmail({ to: recipient, subject: `[${otp}] Password Reset Verification Code - Radha Agency`, htmlContent: htmlContent });
+    const info = await sendNodemailerEmail({ to: recipient, subject: `[${otp}] Password Reset Verification Code - Radha Agency`, htmlContent: htmlContent });
     console.log(`🚀 [Password Reset OTP Sent] To: ${recipient} (${userType}) | MsgID: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
   } catch (error) {
