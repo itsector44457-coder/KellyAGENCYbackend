@@ -3,76 +3,74 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Configuration
+// === Configuration ===
 const gmailUser = (process.env.GMAIL_USER || 'radhaagency4@gmail.com').trim();
 const rawPass = process.env.GMAIL_PASS || process.env.GMAIL_APP_PASSWORD || 'jahkhqfynjvbuwqt';
 const gmailPass = rawPass ? rawPass.replace(/\s+/g, '') : '';
+const resendApiKey = process.env.RESEND_API_KEY ? process.env.RESEND_API_KEY.trim() : null;
 
-// 1. Primary Persistent Pool Transporter (Port 465 SSL)
-const primaryTransporter = nodemailer.createTransport({
+// Nodemailer SMTP (local dev / VPS only — Render/Railway block SMTP ports)
+const smtpTransporter = nodemailer.createTransport({
   pool: true,
-  maxConnections: 5,
-  maxMessages: 100,
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: parseInt(process.env.SMTP_PORT) || 465,
-  secure: parseInt(process.env.SMTP_PORT) === 587 ? false : true,
-  family: 4, // Force IPv4
-  auth: {
-    user: gmailUser,
-    pass: gmailPass,
-  },
-  tls: {
-    rejectUnauthorized: false
-  }
-});
-
-// 2. Secondary Transporter (Port 587 TLS)
-const secondaryTransporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  requireTLS: true,
+  port: 465,
+  secure: true,
   family: 4,
-  auth: {
-    user: gmailUser,
-    pass: gmailPass,
-  },
-  tls: {
-    rejectUnauthorized: false
-  }
+  auth: { user: gmailUser, pass: gmailPass },
+  connectionTimeout: 5000,
+  socketTimeout: 8000,
+  tls: { rejectUnauthorized: false }
 });
 
-// Universal Nodemailer Send Function with Dual-Port Auto Retry
+/**
+ * UNIVERSAL EMAIL DISPATCHER
+ * Priority 1: Resend REST API (HTTPS 443 — NEVER blocked by Render / Railway / any cloud)
+ * Priority 2: Nodemailer Gmail SMTP (works on local / VPS only)
+ */
 export async function sendUniversalEmail({ to, subject, htmlContent }) {
   const recipient = to ? to.trim() : gmailUser;
 
-  // Try Primary Pool Transporter (Port 465 SSL)
+  // ── PRIORITY 1: Resend REST API (Port 443, always open) ──────────────────
+  if (resendApiKey) {
+    try {
+      const fromAddress = process.env.RESEND_FROM_EMAIL
+        ? `Radha Agency <${process.env.RESEND_FROM_EMAIL}>`
+        : 'Radha Agency <onboarding@resend.dev>';
+
+      const resendRes = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${resendApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ from: fromAddress, to: [recipient], subject, html: htmlContent })
+      });
+      const data = await resendRes.json();
+      if (resendRes.ok) {
+        console.log(`🚀 [Resend API Sent] To: ${recipient} | ID: ${data.id}`);
+        return { success: true, messageId: data.id };
+      } else {
+        console.warn('⚠️ [Resend API Error]:', JSON.stringify(data));
+      }
+    } catch (e) {
+      console.warn('⚠️ [Resend API Network Error]:', e.message);
+    }
+  }
+
+  // ── PRIORITY 2: Nodemailer Gmail SMTP (local / VPS fallback) ────────────
   try {
-    const info = await primaryTransporter.sendMail({
+    const info = await smtpTransporter.sendMail({
       from: `"Radha Agency" <${gmailUser}>`,
       to: recipient,
       subject,
       html: htmlContent,
     });
-    console.log(`🚀 [Nodemailer Port 465 Sent] To: ${recipient} | MsgID: ${info.messageId}`);
+    console.log(`🚀 [SMTP Sent] To: ${recipient} | MsgID: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
-  } catch (err1) {
-    console.warn(`⚠️ [Nodemailer 465 Warning]: ${err1.message}. Retrying with Port 587 TLS...`);
-
-    // Try Secondary Transporter (Port 587 TLS)
-    try {
-      const info2 = await secondaryTransporter.sendMail({
-        from: `"Radha Agency" <${gmailUser}>`,
-        to: recipient,
-        subject,
-        html: htmlContent,
-      });
-      console.log(`🚀 [Nodemailer Port 587 Sent] To: ${recipient} | MsgID: ${info2.messageId}`);
-      return { success: true, messageId: info2.messageId };
-    } catch (err2) {
-      console.error(`❌ [Nodemailer Error]: ${err2.message}`);
-      return { success: false, error: err2.message };
-    }
+  } catch (err) {
+    console.error(`❌ [Email Failed — Cloud SMTP Port Blocked]: ${err.message}`);
+    console.error(`   → Add RESEND_API_KEY env var on Render/Railway to fix this.`);
+    return { success: false, error: err.message };
   }
 }
 
