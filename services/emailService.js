@@ -7,29 +7,27 @@ dotenv.config();
 const gmailUser = (process.env.GMAIL_USER || 'radhaagency4@gmail.com').trim();
 const rawPass = process.env.GMAIL_PASS || process.env.GMAIL_APP_PASSWORD || 'jahkhqfynjvbuwqt';
 const gmailPass = rawPass ? rawPass.replace(/\s+/g, '') : '';
-const resendApiKey = process.env.RESEND_API_KEY ? process.env.RESEND_API_KEY.trim() : null;
-const brevoApiKey = process.env.BREVO_API_KEY ? process.env.BREVO_API_KEY.trim() : null;
 
-// Primary SSL Transporter
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 465,
-  secure: true,
+// 1. Primary Persistent Pool Transporter (Port 465 SSL)
+const primaryTransporter = nodemailer.createTransport({
+  pool: true,
+  maxConnections: 5,
+  maxMessages: 100,
+  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  port: parseInt(process.env.SMTP_PORT) || 465,
+  secure: parseInt(process.env.SMTP_PORT) === 587 ? false : true,
   family: 4, // Force IPv4
   auth: {
     user: gmailUser,
     pass: gmailPass,
   },
-  connectionTimeout: 4000, // Quick 4s timeout - never hang the server for 30s!
-  greetingTimeout: 4000,
-  socketTimeout: 6000,
   tls: {
     rejectUnauthorized: false
   }
 });
 
-// Fallback Port 587 TLS Transporter
-const fallbackTransporter = nodemailer.createTransport({
+// 2. Secondary Transporter (Port 587 TLS)
+const secondaryTransporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
   port: 587,
   secure: false,
@@ -39,78 +37,18 @@ const fallbackTransporter = nodemailer.createTransport({
     user: gmailUser,
     pass: gmailPass,
   },
-  connectionTimeout: 4000,
-  greetingTimeout: 4000,
-  socketTimeout: 6000,
   tls: {
     rejectUnauthorized: false
   }
 });
 
-/**
- * Universal Ultra-Fast Email Dispatcher
- * 1. Checks HTTPS REST APIs (Resend / Brevo) - Port 443 (Never blocked by Render cloud firewalls)
- * 2. Tries Nodemailer Direct SSL 465
- * 3. Tries Nodemailer Port 587 TLS
- */
+// Universal Nodemailer Send Function with Dual-Port Auto Retry
 export async function sendUniversalEmail({ to, subject, htmlContent }) {
   const recipient = to ? to.trim() : gmailUser;
 
-  // 1. Resend API (HTTPS Port 443)
-  if (resendApiKey) {
-    try {
-      const res = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${resendApiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          from: `Radha Agency <${process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev'}>`,
-          to: [recipient],
-          subject,
-          html: htmlContent
-        })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        console.log(`🚀 [Resend HTTPS Sent] To: ${recipient} | ID: ${data.id}`);
-        return { success: true, messageId: data.id };
-      }
-    } catch (e) {
-      console.warn('⚠️ [Resend API failed]:', e.message);
-    }
-  }
-
-  // 2. Brevo API (HTTPS Port 443)
-  if (brevoApiKey) {
-    try {
-      const res = await fetch('https://api.brevo.com/v3/smtp/email', {
-        method: 'POST',
-        headers: {
-          'api-key': brevoApiKey,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          sender: { name: 'Radha Agency', email: gmailUser },
-          to: [{ email: recipient }],
-          subject,
-          htmlContent
-        })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        console.log(`🚀 [Brevo HTTPS Sent] To: ${recipient} | ID: ${data.messageId}`);
-        return { success: true, messageId: data.messageId };
-      }
-    } catch (e) {
-      console.warn('⚠️ [Brevo API failed]:', e.message);
-    }
-  }
-
-  // 3. Primary Nodemailer SSL 465
+  // Try Primary Pool Transporter (Port 465 SSL)
   try {
-    const info = await transporter.sendMail({
+    const info = await primaryTransporter.sendMail({
       from: `"Radha Agency" <${gmailUser}>`,
       to: recipient,
       subject,
@@ -119,11 +57,11 @@ export async function sendUniversalEmail({ to, subject, htmlContent }) {
     console.log(`🚀 [Nodemailer Port 465 Sent] To: ${recipient} | MsgID: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
   } catch (err1) {
-    console.warn(`⚠️ [Nodemailer 465 Timeout/Blocked]: ${err1.message}. Retrying on Port 587...`);
+    console.warn(`⚠️ [Nodemailer 465 Warning]: ${err1.message}. Retrying with Port 587 TLS...`);
 
-    // 4. Fallback Nodemailer TLS 587
+    // Try Secondary Transporter (Port 587 TLS)
     try {
-      const info2 = await fallbackTransporter.sendMail({
+      const info2 = await secondaryTransporter.sendMail({
         from: `"Radha Agency" <${gmailUser}>`,
         to: recipient,
         subject,
@@ -132,7 +70,7 @@ export async function sendUniversalEmail({ to, subject, htmlContent }) {
       console.log(`🚀 [Nodemailer Port 587 Sent] To: ${recipient} | MsgID: ${info2.messageId}`);
       return { success: true, messageId: info2.messageId };
     } catch (err2) {
-      console.error(`❌ [SMTP Cloud Firewall Blocked]: ${err2.message}`);
+      console.error(`❌ [Nodemailer Error]: ${err2.message}`);
       return { success: false, error: err2.message };
     }
   }
