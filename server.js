@@ -353,12 +353,16 @@ app.post('/api/auth/forgot-password/send-otp', async (req, res) => {
 
     console.log(`🔑 [PASSWORD RESET OTP GENERATED] Email: ${cleanEmail} (${userType}) | OTP: ${otp}`);
 
-    await sendPasswordResetOtpEmail({
+    // Dispatch asynchronously for 100ms instant response
+    sendPasswordResetOtpEmail({
       to: cleanEmail,
       name: userName,
       otp,
       userType
-    });
+    }).then(r => {
+      if (r && r.success) console.log(`✅ [Reset OTP Delivered] To: ${cleanEmail}`);
+      else console.warn(`⚠️ [Reset OTP Email Warning]: ${(r && r.error) || 'Check SMTP/Brevo connection'}`);
+    }).catch(e => console.warn(`⚠️ [Reset OTP Email Error]: ${e.message}`));
 
     res.json({
       success: true,
