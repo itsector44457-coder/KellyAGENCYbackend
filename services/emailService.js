@@ -7,9 +7,12 @@ dotenv.config();
 const gmailUser = (process.env.GMAIL_USER || 'radhaagency4@gmail.com').trim();
 const rawPass = process.env.GMAIL_PASS || process.env.GMAIL_APP_PASSWORD || 'jahkhqfynjvbuwqt';
 const gmailPass = rawPass ? rawPass.replace(/\s+/g, '') : '';
-const resendApiKey = process.env.RESEND_API_KEY ? process.env.RESEND_API_KEY.trim() : null;
 
-// Nodemailer SMTP (local dev / VPS only — Render/Railway block SMTP ports)
+// Cloud-compatible email providers (HTTPS Port 443 — never blocked by Render/Railway)
+const brevoApiKey   = process.env.BREVO_API_KEY   ? process.env.BREVO_API_KEY.trim()   : null;
+const resendApiKey  = process.env.RESEND_API_KEY  ? process.env.RESEND_API_KEY.trim()  : null;
+
+// Nodemailer SMTP (works on local & VPS only — Render/Railway block SMTP ports)
 const smtpTransporter = nodemailer.createTransport({
   pool: true,
   host: 'smtp.gmail.com',
@@ -24,19 +27,48 @@ const smtpTransporter = nodemailer.createTransport({
 
 /**
  * UNIVERSAL EMAIL DISPATCHER
- * Priority 1: Resend REST API (HTTPS 443 — NEVER blocked by Render / Railway / any cloud)
- * Priority 2: Nodemailer Gmail SMTP (works on local / VPS only)
+ * Priority 1: Brevo REST API  (Free 300/day, no domain needed, HTTPS 443)
+ * Priority 2: Resend REST API (Needs custom domain, HTTPS 443)
+ * Priority 3: Nodemailer SMTP (Local/VPS only — blocked on Render/Railway)
  */
 export async function sendUniversalEmail({ to, subject, htmlContent }) {
   const recipient = to ? to.trim() : gmailUser;
 
-  // ── PRIORITY 1: Resend REST API (Port 443, always open) ──────────────────
+  // ── PRIORITY 1: Brevo REST API (Free, no custom domain needed) ───────────
+  if (brevoApiKey) {
+    try {
+      const brevoRes = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': brevoApiKey,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          sender: { name: 'Radha Agency', email: gmailUser },
+          to: [{ email: recipient }],
+          subject,
+          htmlContent
+        })
+      });
+      const data = await brevoRes.json();
+      if (brevoRes.ok) {
+        console.log(`🚀 [Brevo API Sent] To: ${recipient} | MsgID: ${data.messageId}`);
+        return { success: true, messageId: data.messageId };
+      } else {
+        console.warn('⚠️ [Brevo API Error]:', JSON.stringify(data));
+      }
+    } catch (e) {
+      console.warn('⚠️ [Brevo Network Error]:', e.message);
+    }
+  }
+
+  // ── PRIORITY 2: Resend REST API (Needs verified custom domain) ───────────
   if (resendApiKey) {
     try {
       const fromAddress = process.env.RESEND_FROM_EMAIL
         ? `Radha Agency <${process.env.RESEND_FROM_EMAIL}>`
         : 'Radha Agency <onboarding@resend.dev>';
-
       const resendRes = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
@@ -53,11 +85,11 @@ export async function sendUniversalEmail({ to, subject, htmlContent }) {
         console.warn('⚠️ [Resend API Error]:', JSON.stringify(data));
       }
     } catch (e) {
-      console.warn('⚠️ [Resend API Network Error]:', e.message);
+      console.warn('⚠️ [Resend Network Error]:', e.message);
     }
   }
 
-  // ── PRIORITY 2: Nodemailer Gmail SMTP (local / VPS fallback) ────────────
+  // ── PRIORITY 3: Nodemailer SMTP (Local/VPS fallback only) ────────────────
   try {
     const info = await smtpTransporter.sendMail({
       from: `"Radha Agency" <${gmailUser}>`,
@@ -68,8 +100,8 @@ export async function sendUniversalEmail({ to, subject, htmlContent }) {
     console.log(`🚀 [SMTP Sent] To: ${recipient} | MsgID: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
   } catch (err) {
-    console.error(`❌ [Email Failed — Cloud SMTP Port Blocked]: ${err.message}`);
-    console.error(`   → Add RESEND_API_KEY env var on Render/Railway to fix this.`);
+    console.error(`❌ [All Email Methods Failed]: ${err.message}`);
+    console.error(`   → Add BREVO_API_KEY env var on Render/Railway to fix this permanently.`);
     return { success: false, error: err.message };
   }
 }
