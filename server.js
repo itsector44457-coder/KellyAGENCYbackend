@@ -690,9 +690,36 @@ app.put('/api/projects/:id', async (req, res) => {
     const updates = { ...req.body };
     delete updates._id;
 
-    const project = await ProjectModel.findOneAndUpdate({ id }, { $set: updates }, { new: true });
-    if (!project) return res.status(404).json({ error: 'Project not found' });
+    const existingProject = await ProjectModel.findOne({ id });
+    if (!existingProject) return res.status(404).json({ error: 'Project not found' });
 
+    // If advanceRequiredPercent or price changed, update financial calculations
+    if (updates.advanceRequiredPercent !== undefined || updates.price !== undefined) {
+      const priceStr = updates.price || existingProject.price || '₹25,000';
+      const numericPrice = Number(priceStr.replace(/[^0-9.]/g, '')) || existingProject.advancePayment?.totalValue || 25000;
+      const advancePercent = Number(updates.advanceRequiredPercent !== undefined ? updates.advanceRequiredPercent : existingProject.advanceRequiredPercent) || 50;
+      const advanceVal = Math.round(numericPrice * (advancePercent / 100));
+      const remainingVal = numericPrice - advanceVal;
+
+      updates.advanceRequiredPercent = advancePercent;
+      
+      const currentAdv = existingProject.advancePayment || {};
+      updates.advancePayment = {
+        ...currentAdv.toObject ? currentAdv.toObject() : currentAdv,
+        totalValue: numericPrice,
+        advanceRequiredPercent: advancePercent,
+        advanceAmount: advanceVal,
+        remainingAmount: remainingVal
+      };
+
+      const currentContract = existingProject.contract || {};
+      updates.contract = {
+        ...currentContract.toObject ? currentContract.toObject() : currentContract,
+        paymentTerms: `${advancePercent}% Advance Payment upon Contract Acceptance. ${100 - advancePercent}% Balance upon final delivery.`
+      };
+    }
+
+    const project = await ProjectModel.findOneAndUpdate({ id }, { $set: updates }, { new: true });
     res.json(project);
   } catch (err) {
     res.status(500).json({ error: err.message });
