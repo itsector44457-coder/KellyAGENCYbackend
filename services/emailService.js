@@ -131,33 +131,110 @@ export async function sendMemberNotificationEmail({ to, subject, title, message,
 }
 
 /**
- * Send Client Project Acceptance Package Email
+ * Send Client Project Acceptance Package & 3-Tier Proposal Email
  */
-export async function sendClientProjectPortalEmail({ to, clientName, projectTitle, portalUrl, clientLoginUrl, clientPassword, advancePercent, advanceAmount }) {
+export async function sendClientProjectPortalEmail({ 
+  to, 
+  clientName, 
+  projectTitle, 
+  portalUrl, 
+  clientLoginUrl, 
+  clientPassword, 
+  advancePercent, 
+  advanceAmount,
+  totalPrice,
+  proposalData
+}) {
   const recipient = to || 'client@example.com';
+  const displayPrice = totalPrice ? `₹${Number(totalPrice).toLocaleString('en-IN')}` : '₹24,999';
+  const displayAdvance = advanceAmount ? `₹${Number(advanceAmount).toLocaleString('en-IN')}` : '₹12,500';
+
+  const packagesHtml = proposalData?.packages?.map((pkg) => `
+    <div style="background-color: #1A1C11; border: 1px solid ${pkg.isRecommended ? '#b7e44c' : 'rgba(255,255,255,0.1)'}; border-radius: 12px; padding: 16px; margin-bottom: 12px; text-align: left;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+        <span style="font-size: 14px; font-weight: 800; color: #fff; text-transform: uppercase;">${pkg.name}</span>
+        <span style="font-size: 16px; font-weight: 900; color: #b7e44c; font-family: monospace;">${pkg.priceFormatted || '₹' + pkg.price}</span>
+      </div>
+      <div style="font-size: 12px; color: #888680; margin-bottom: 8px;">${pkg.subtitle}</div>
+      ${pkg.isRecommended ? '<div style="display: inline-block; background-color: rgba(183, 228, 76, 0.2); color: #b7e44c; font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 9999px; text-transform: uppercase; margin-bottom: 8px;">★ MOST RECOMMENDED</div>' : ''}
+    </div>
+  `).join('') || `
+    <div style="background-color: #1A1C11; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 14px; margin-bottom: 8px;">
+      <strong style="color: #fff;">BASIC (₹7,000)</strong> - Starter catalogue / low-budget launch
+    </div>
+    <div style="background-color: #1A1C11; border: 1px solid #b7e44c; border-radius: 12px; padding: 14px; margin-bottom: 8px;">
+      <strong style="color: #b7e44c;">SHOPIFY INTEGRATED (₹24,999)</strong> - [MOST RECOMMENDED] Complete e-commerce store
+    </div>
+    <div style="background-color: #1A1C11; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 14px; margin-bottom: 8px;">
+      <strong style="color: #fff;">FULLY CUSTOM (₹34,999)</strong> - Custom backend + admin panel + workflows
+    </div>
+  `;
+
   const htmlContent = `
     <!DOCTYPE html>
     <html>
     <head><meta charset="utf-8"></head>
-    <body style="font-family: 'Space Grotesk', system-ui, sans-serif; background-color: #1A1C11; color: #f1ece2; padding: 24px;">
-      <div style="max-width: 600px; margin: 0 auto; background-color: #24271B; border: 2px solid #b7e44c; border-radius: 20px; padding: 32px;">
-        <div style="font-size: 20px; font-weight: 900; color: #b7e44c; margin-bottom: 20px;">RADHA AGENCY • PROJECT ACCEPTANCE</div>
-        <div style="font-size: 24px; font-weight: 700; color: #fff; margin-bottom: 12px;">Official Project Scope & Agreement</div>
-        <p style="font-size: 14px; color: #d1cfc7; line-height: 1.6;">Dear <strong>${clientName}</strong>, your project package for <strong>"${projectTitle}"</strong> is ready for review.</p>
-        <div style="background-color: #1A1C11; border-radius: 12px; padding: 20px; margin: 20px 0;">
-          <div style="font-size: 11px; text-transform: uppercase; color: #888680; font-weight: 700;">Client Login ID</div>
-          <div style="font-size: 14px; color: #fff; font-family: monospace;">${recipient}</div>
-          <div style="font-size: 11px; text-transform: uppercase; color: #888680; font-weight: 700; margin-top: 12px;">Access Password</div>
-          <div style="font-size: 14px; color: #b7e44c; font-family: monospace; font-weight: 700;">${clientPassword || 'Contact Radha Agency'}</div>
-          ${advanceAmount ? `<div style="font-size: 11px; text-transform: uppercase; color: #888680; font-weight: 700; margin-top: 12px;">Required Advance (${advancePercent || 50}%)</div><div style="font-size: 18px; color: #b7e44c; font-family: monospace; font-weight: 900;">₹${Number(advanceAmount).toLocaleString('en-IN')}</div>` : ''}
+    <body style="font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #14160E; color: #f1ece2; padding: 24px; margin: 0;">
+      <div style="max-width: 620px; margin: 0 auto; background-color: #1F2117; border: 2px solid #b7e44c; border-radius: 24px; padding: 32px; box-shadow: 0 20px 40px rgba(0,0,0,0.5);">
+        
+        <!-- Header -->
+        <div style="border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 20px; margin-bottom: 24px;">
+          <div style="font-size: 13px; font-weight: 900; letter-spacing: 2px; color: #b7e44c; text-transform: uppercase;">RADHA AGENCY • PROPOSAL PACKAGE</div>
+          <div style="font-size: 24px; font-weight: 800; color: #ffffff; margin-top: 6px;">${projectTitle}</div>
+          <div style="font-size: 13px; color: #a1a1aa; margin-top: 4px;">Prepared for: <strong style="color: #ffffff;">${clientName}</strong></div>
         </div>
-        <div style="text-align: center;"><a href="${portalUrl || clientLoginUrl}" style="background-color: #b7e44c; color: #111; font-weight: 800; font-size: 13px; text-transform: uppercase; padding: 14px 28px; border-radius: 9999px; text-decoration: none;">Review Proposal & Pay Advance →</a></div>
-        <div style="margin-top: 32px; font-size: 11px; color: #888680; text-align: center;">© ${new Date().getFullYear()} RADHA AGENCY DIGITAL MEDIA.</div>
+
+        <p style="font-size: 14px; color: #d4d4d8; line-height: 1.6;">
+          Dear <strong>${clientName}</strong>,<br/>
+          Thank you for choosing Radha Agency. Your tailored 3-Page Project Proposal, Comparison Matrix, and Official Scope are ready for your review and package selection.
+        </p>
+
+        <!-- Package Options Summary -->
+        <div style="margin: 24px 0;">
+          <div style="font-size: 11px; font-weight: 800; color: #b7e44c; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;">Available Packages & Scope</div>
+          ${packagesHtml}
+        </div>
+
+        <!-- Credentials Box -->
+        <div style="background-color: #14160E; border: 1px solid rgba(183, 228, 76, 0.3); border-radius: 16px; padding: 20px; margin: 24px 0;">
+          <div style="display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 10px; margin-bottom: 10px; font-size: 13px;">
+            <span style="color: #a1a1aa;">Client Portal Login:</span>
+            <strong style="color: #ffffff; font-family: monospace;">${recipient}</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 10px; margin-bottom: 10px; font-size: 13px;">
+            <span style="color: #a1a1aa;">Access Password:</span>
+            <strong style="color: #b7e44c; font-family: monospace;">${clientPassword || 'RadhaClient#9821'}</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 13px;">
+            <span style="color: #a1a1aa;">Initial Advance (${advancePercent || 50}%):</span>
+            <strong style="color: #b7e44c; font-family: monospace; font-size: 15px;">${displayAdvance}</strong>
+          </div>
+        </div>
+
+        <!-- CTA Button -->
+        <div style="text-align: center; margin: 32px 0 20px;">
+          <a href="${portalUrl || clientLoginUrl}" style="display: inline-block; background-color: #b7e44c; color: #111111; font-weight: 900; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; padding: 16px 36px; border-radius: 9999px; text-decoration: none; box-shadow: 0 10px 25px rgba(183, 228, 76, 0.3);">
+            Open Interactive Client Portal →
+          </a>
+        </div>
+
+        <div style="text-align: center; font-size: 11px; color: #71717a; margin-top: 24px;">
+          You can select your desired package, view the comparison table, sign the agreement, and download the 3-page PDF directly on your portal.
+        </div>
+
+        <div style="margin-top: 32px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px; font-size: 11px; color: #71717a; text-align: center;">
+          © ${new Date().getFullYear()} RADHA AGENCY DIGITAL MEDIA • Web Development & Growth Experts
+        </div>
       </div>
     </body>
     </html>
   `;
-  return sendUniversalEmail({ to: recipient, subject: `📋 Project Acceptance Package: "${projectTitle}" - Radha Agency`, htmlContent });
+
+  return sendUniversalEmail({ 
+    to: recipient, 
+    subject: `📋 Official Project Proposal & Packages: "${projectTitle}" - Radha Agency`, 
+    htmlContent 
+  });
 }
 
 /**

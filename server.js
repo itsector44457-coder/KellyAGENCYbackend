@@ -599,7 +599,7 @@ app.post('/api/projects', async (req, res) => {
     const projectId = `proj-${Date.now()}`;
     const priceStr = projectData.price || '₹25,000';
     const numericPrice = Number(priceStr.replace(/[^0-9.]/g, '')) || 25000;
-    const advancePercent = Number(projectData.advanceRequiredPercent || projectData.advancePercent) || 50;
+    const advancePercent = Number(projectData.advanceRequiredPercent || projectData.advancePercent) || 20;
     const advanceVal = Math.round(numericPrice * (advancePercent / 100));
     const remainingVal = numericPrice - advanceVal;
 
@@ -839,6 +839,115 @@ app.post('/api/client-portal/:tokenOrId/submit-payment', async (req, res) => {
     } catch (_) { /* non-critical */ }
 
     res.json({ success: true, message: 'Payment verification submitted to Finance', project });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST send or resend official Proposal package email to client's Gmail
+app.post('/api/projects/:id/send-proposal-email', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { clientEmail, proposalData, clientName, projectTitle } = req.body;
+
+    let project = await ProjectModel.findOne({ id });
+    if (!project) {
+      project = await ProjectModel.findOne({ clientPortalToken: id });
+    }
+
+    const targetEmail = clientEmail || project?.clientEmail || 'client@example.com';
+    const portalUrl = `${FRONTEND_URL}/client-portal/${project?.clientPortalToken || id}`;
+    const clientLoginUrl = `${FRONTEND_URL}/client-login`;
+    const numericPrice = project?.advancePayment?.totalValue || 24999;
+    const advancePercent = project?.advanceRequiredPercent || 20;
+    const advanceVal = project?.advancePayment?.advanceAmount || Math.round(numericPrice * (advancePercent / 100));
+
+    if (project && proposalData) {
+      project.set('fullProposalData', proposalData);
+      await project.save();
+    }
+
+    const emailResult = await sendClientProjectPortalEmail({
+      to: targetEmail,
+      clientName: clientName || project?.client || 'Valued Client',
+      projectTitle: projectTitle || project?.title || 'E-Commerce Platform Solution',
+      portalUrl,
+      clientLoginUrl,
+      clientPassword: project?.clientPassword || 'RadhaClient#9821',
+      advancePercent,
+      advanceAmount: advanceVal,
+      totalPrice: numericPrice,
+      proposalData: proposalData || project?.fullProposalData
+    });
+
+    res.json({ success: true, message: `Proposal package sent to ${targetEmail}`, emailResult });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST Client selects a package on client portal
+app.post('/api/client-portal/:tokenOrId/select-package', async (req, res) => {
+  try {
+    const { tokenOrId } = req.params;
+    const { packageId, packageName, packagePrice } = req.body;
+
+    let project = await ProjectModel.findOne({ clientPortalToken: tokenOrId });
+    if (!project) project = await ProjectModel.findOne({ id: tokenOrId });
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    const numericPrice = Number(packagePrice) || 24999;
+    const advancePercent = project.advanceRequiredPercent || 20;
+    const advanceVal = Math.round(numericPrice * (advancePercent / 100));
+    const remainingVal = numericPrice - advanceVal;
+
+    project.price = `₹${numericPrice.toLocaleString('en-IN')}`;
+    project.advancePayment = {
+      ...project.advancePayment,
+      totalValue: numericPrice,
+      advanceRequiredPercent: advancePercent,
+      advanceAmount: advanceVal,
+      remainingAmount: remainingVal
+    };
+
+    if (project.fullProposalData) {
+      project.set('fullProposalData.selectedPackageId', packageId);
+    }
+
+    project.contract = {
+      ...project.contract,
+      paymentTerms: `${advancePercent}% Advance Payment upon Contract Acceptance (₹${advanceVal.toLocaleString('en-IN')}). ${100 - advancePercent}% Balance upon final delivery (₹${remainingVal.toLocaleString('en-IN')}).`
+    };
+
+    await project.save();
+    res.json({ success: true, message: `Package ${packageName} selected`, project });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST Client submits Content & Assets Checklist
+app.post('/api/client-portal/:tokenOrId/submit-assets', async (req, res) => {
+  try {
+    const { tokenOrId } = req.params;
+    const assetsData = req.body;
+
+    let project = await ProjectModel.findOne({ clientPortalToken: tokenOrId });
+    if (!project) project = await ProjectModel.findOne({ id: tokenOrId });
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    project.assetsChecklist = {
+      ...assetsData,
+      submittedAt: new Date().toISOString()
+    };
+
+    // If progress was < 30, boost progress to 35% as UI assets received!
+    if ((project.progress || 0) < 35) {
+      project.progress = 35;
+    }
+
+    await project.save();
+    res.json({ success: true, message: 'Content & Assets Checklist saved successfully', project });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -66,7 +66,42 @@ const projectSchema = new mongoose.Schema({
     date: { type: String },
     notes: { type: String },
     createdBy: { type: String }
-  }]
+  }],
+
+  // 📝 Client Content & Assets Checklist
+  assetsChecklist: {
+    logoUrl: { type: String },
+    brandColors: { type: String },
+    productPhotosUrl: { type: String },
+    sampleProducts: [{
+      name: { type: String },
+      description: { type: String },
+      mrp: { type: String },
+      sellingPrice: { type: String },
+      sizes: { type: String },
+      stock: { type: String },
+      category: { type: String }
+    }],
+    bulkProductsFileUrl: { type: String },
+    aboutUsText: { type: String },
+    contactInfo: {
+      phone: { type: String },
+      whatsapp: { type: String },
+      email: { type: String },
+      address: { type: String }
+    },
+    policies: { type: String },
+    socialLinks: {
+      instagram: { type: String },
+      facebook: { type: String },
+      youtube: { type: String },
+      other: { type: String }
+    },
+    domainCredentials: { type: String },
+    driveFolderUrl: { type: String },
+    additionalNotes: { type: String },
+    submittedAt: { type: String }
+  }
 }, { timestamps: true });
 
 export const ProjectModel = mongoose.model('Project', projectSchema);
